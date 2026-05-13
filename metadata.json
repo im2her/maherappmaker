@@ -1,0 +1,10 @@
+{
+  "name": "Maher Platform",
+  "description": "An integrated Saudi platform to build applications.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}

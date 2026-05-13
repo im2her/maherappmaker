@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-tajawal: 'Tajawal', sans-serif;
+  --font-inter: 'Inter', sans-serif;
+  --color-gold-500: #c5a059;
+}
+
+@layer base {
+  html {
+    @apply antialiased text-zinc-100 bg-zinc-950 text-[15px] sm:text-[16px];
+  }
+}
+
+@layer utilities {
+  .rtl {
+    direction: rtl;
+    font-family: var(--font-tajawal);
+  }
+  
+  .ltr {
+    direction: ltr;
+    font-family: var(--font-inter);
+  }
+
+  .glass {
+    @apply bg-zinc-900/50 backdrop-blur-md border border-zinc-800/50;
+  }
+
+  .mesh-bg {
+    background-color: #0d0d0e;
+    background-image: 
+      radial-gradient(circle at 2px 2px, rgba(197, 160, 89, 0.15) 1px, transparent 0);
+    background-size: 32px 32px;
+    background-attachment: fixed;
+    position: relative;
+  }
+  
+  .mesh-bg::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 50% 50%, rgba(197, 160, 89, 0.05), transparent 70%);
+    pointer-events: none;
+    z-index: -1;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: theme('colors.zinc.800');
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: theme('colors.zinc.700');
+}

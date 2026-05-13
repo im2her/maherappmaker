@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { 
+      allow read, write: if false; 
+    }
+
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      return isSignedIn() && request.auth.token.get('email', '') == 'mr.imaher@gmail.com'; 
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'plan', 'messageCount', 'monthlyMessageCount', 'lastMessageReset', 'subscriptionCount', 'totalMessages', 'createdAt', 'updatedAt']) &&
+             data.email is string &&
+             data.plan in ['free', 'pro', 'elite'] &&
+             data.messageCount is number &&
+             data.monthlyMessageCount is number &&
+             data.subscriptionCount is number &&
+             data.totalMessages is number &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && (
+        (isAdmin()) ||
+        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['messageCount', 'monthlyMessageCount', 'lastMessageReset', 'totalMessages', 'updatedAt']) &&
+         incoming().plan == existing().plan &&
+         incoming().subscriptionCount == existing().subscriptionCount &&
+         incoming().updatedAt == request.time)
+      );
+    }
+
+    function isValidChat(data) {
+      return data.keys().hasAll(['userId', 'title', 'agentName', 'updatedAt']) &&
+             (data.userId == request.auth.uid || isAdmin()) &&
+             data.title is string && data.title.size() <= 200 &&
+             data.agentName is string && data.agentName.size() <= 100 &&
+             data.updatedAt == request.time &&
+             (!('isPinned' in data) || data.isPinned is bool);
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['role', 'content', 'createdAt']) &&
+             data.keys().size() == 3 &&
+             data.role in ['user', 'model'] &&
+             data.content is string && data.content.size() <= 150000 &&
+             data.createdAt == request.time;
+    }
+
+    match /chats/{chatId} {
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(chatId) && isValidChat(incoming());
+      allow update: if isSignedIn() && isValidId(chatId) && (existing().userId == request.auth.uid || isAdmin()) && isValidChat(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['agentName', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'agentName', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['isPinned', 'updatedAt']) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['isPinned', 'title', 'updatedAt'])
+      );
+      allow delete: if isSignedIn() && isValidId(chatId) && (existing().userId == request.auth.uid || isAdmin());
+
+      match /messages/{messageId} {
+        function isChatOwner() {
+          return get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid || isAdmin();
+        }
+
+        allow read: if isSignedIn() && isChatOwner();
+        allow create: if isSignedIn() && isValidId(messageId) && isChatOwner() && isValidMessage(incoming());
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(messageId) && isChatOwner();
+      }
+    }
+  }
+}
