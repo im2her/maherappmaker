@@ -42,7 +42,10 @@ export const PWAInstall: React.FC<PWAInstallProps> = ({ isOpen, onClose }) => {
   }, [isOpen, onClose]);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+      alert('نظام التشغيل لديك يمنع تثبيت التطبيق مباشرةً. يرجى التثبيت يدوياً من خيارات المتصفح (⋮) أو خيار "إضافة إلى الشاشة الرئيسية".');
+      return;
+    }
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') {
@@ -58,9 +61,10 @@ export const PWAInstall: React.FC<PWAInstallProps> = ({ isOpen, onClose }) => {
           initial={{ opacity: 0, y: 50, scale: 0.9 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.95 }}
-          className="fixed bottom-6 right-6 left-6 md:left-auto md:w-[400px] z-[100] bg-zinc-900/90 backdrop-blur-xl border border-gold-500/20 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden rtl"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 md:translate-x-0 md:left-auto md:right-6 w-[92vw] max-w-[360px] z-[200] bg-zinc-900/95 backdrop-blur-xl border border-zinc-800/80 rounded-2xl shadow-2xl overflow-hidden rtl"
         >
-          <div className="absolute top-0 inset-x-0 h-1 bg-gold-500/20">
+          {/* Progress Bar */}
+          <div className="absolute top-0 inset-x-0 h-1 bg-zinc-800">
             <motion.div 
               initial={{ width: "100%" }}
               animate={{ width: "0%" }}
@@ -69,76 +73,67 @@ export const PWAInstall: React.FC<PWAInstallProps> = ({ isOpen, onClose }) => {
             />
           </div>
 
-          <div className="p-5 flex items-start gap-4">
-            <div className="w-14 h-14 bg-zinc-950 rounded-2xl flex-shrink-0 border border-zinc-800 overflow-hidden shadow-lg">
-              <img 
-                src="/AppIcon~ios-marketing.png" 
-                alt="Maher" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-lg font-bold text-white">تثبيت التطبيق</h3>
-                <button 
-                  onClick={onClose}
-                  className="p-1 text-zinc-500 hover:text-white transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+          <div className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-zinc-950 rounded-lg flex-shrink-0 border border-zinc-800 overflow-hidden shadow-sm">
+                <img 
+                  src="/AppIcon~ios-marketing.png" 
+                  alt="Maher" 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
               </div>
-              <p className="text-sm text-zinc-400 leading-tight mb-3">
-                {device === 'ios' 
-                  ? 'للتثبيت على الايفون: اضغط على زر المشاركة في شريط الأدوات السفلي ثم اختر "إضافة إلى الصفحة الرئيسية"' 
-                  : (deferredPrompt 
-                      ? 'بإمكانك الآن تثبيت ماهر كاختصار على شاشتك الرئيسية للوصول السريع'
-                      : 'للحصول على أفضل تجربة، أضف ماهر إلى شاشتك الرئيسية عبر خيارات المتصفح (⋮)')}
-              </p>
+              
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white">تثبيت التطبيق</h3>
+                  <button 
+                    onClick={onClose}
+                    className="p-1 text-zinc-500 hover:text-white transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
+                  {device === 'ios' 
+                    ? 'أضف ماهر لشاشتك الرئيسية لتجربة أسرع.' 
+                    : (deferredPrompt 
+                        ? 'أضف ماهر كاختصار للوصول السريع.'
+                        : 'أضف التطبيق لشاشتك عبر خيارات المتصفح (⋮).')}
+                </p>
+              </div>
+            </div>
 
-              <div className="flex flex-col gap-2">
-                {device === 'ios' ? (
-                  <div className="flex items-center gap-2 text-[10px] text-zinc-500 bg-zinc-800/50 px-3 py-1.5 rounded-lg border border-zinc-700/50 w-fit">
-                    <Share className="w-3 h-3 text-blue-400" />
-                    <span>المشاركة</span>
-                    <ChevronLeft className="w-3 h-3" />
-                    <PlusSquare className="w-3 h-3 text-gold-500" />
-                    <span>إضافة</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {deferredPrompt && (
-                      <button 
-                        onClick={handleInstallClick}
-                        className="flex items-center justify-center gap-2 bg-gold-500 text-zinc-950 font-bold py-2 px-4 rounded-xl text-sm hover:bg-gold-400 transition-colors shadow-lg shadow-gold-500/10"
-                      >
-                        <Download className="w-4 h-4" />
-                        <span>تثبيت الآن</span>
-                      </button>
-                    )}
-                    <div className="flex items-center gap-2 text-[10px] text-zinc-500 bg-zinc-800/50 px-3 py-1.5 rounded-lg border border-zinc-700/50 w-fit">
-                      <Download className="w-3 h-3 text-gold-500" />
-                      <span>أو من خيارات المتصفح (⋮)</span>
-                    </div>
-                  </div>
-                )}
-              </div>
+            <div className="mt-3 pt-3 border-t border-zinc-800/50">
+              {device === 'ios' ? (
+                <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-300 bg-zinc-800/50 px-2 py-2 rounded-lg border border-zinc-700/50">
+                  <span>اضغط</span>
+                  <Share className="w-3 h-3 text-blue-400 mx-0.5" />
+                  <span>ثم اختر</span>
+                  <PlusSquare className="w-3 h-3 text-gold-500 mx-0.5" />
+                  <span>إضافة إلى الشاشة</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={handleInstallClick}
+                    className="flex-1 flex items-center justify-center gap-1.5 bg-gold-500 text-zinc-950 font-bold py-2 rounded-lg text-xs hover:bg-gold-400 transition-colors shadow-lg shadow-gold-500/10"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>تثبيت الآن</span>
+                  </button>
+                  <button 
+                    onClick={onClose}
+                    className="px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
+                  >
+                    لاحقاً
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-          
-          <div className="bg-zinc-950/50 px-5 py-3 border-t border-zinc-800/50 flex items-center justify-between">
-            <span className="text-[10px] text-zinc-500 font-medium">سريع • خفيف</span>
-            <button 
-              onClick={onClose}
-              className="text-xs font-bold text-gold-500 hover:text-gold-400 transition-colors"
-            >
-              تم
-            </button>
           </div>
         </motion.div>
       )}
     </AnimatePresence>
-
   );
 };

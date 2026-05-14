@@ -24,6 +24,15 @@
     font-family: var(--font-inter);
   }
 
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+
   .glass {
     @apply bg-zinc-900/50 backdrop-blur-md border border-zinc-800/50;
   }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { User, sendEmailVerification, reload } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, increment, deleteDoc, orderBy, limit } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType, safeAddDoc } from '../lib/firebase';
 import { processRequest } from '../lib/engine';
 import { motion, AnimatePresence } from 'motion/react';
 import { CodeBackground } from './CodeBackground';
@@ -134,6 +134,12 @@ const MessageItem = memo(function MessageItem({
       if (p1.trim()) suggestions.push(p1.trim());
       return '';
     }).trim();
+
+    if (agentType === 'مصنع التطبيقات') {
+      cleanContent = cleanContent.replace(/```(?:html|tsx|jsx)\n([\s\S]*?)```/g, '\n```html-hidden\n[تم تحديث واجهة المستخدم]\n```\n');
+    } else if (agentType === 'ماهر العام') {
+      cleanContent = cleanContent.replace(/```(?:html|tsx|jsx)\n([\s\S]*?)```/g, '\n```html-hidden\n[تم حجب الكود]\n```\n');
+    }
   }
 
   return (
@@ -170,7 +176,7 @@ const MessageItem = memo(function MessageItem({
                 code({node, inline, className, children, ...props}: any) {
                   const match = /language-(\w+)/.exec(className || '')
                   if (!inline && match) {
-                    if ((agentType === "مصنع التطبيقات" && match[1] === 'html') || agentType === "ماهر العام") {
+                    if (match[1] === 'html-hidden' || (agentType === "مصنع التطبيقات" && match[1] === 'html') || agentType === "ماهر العام") {
                       return (
                         <div className="ltr text-sm font-inter mt-2 mb-2 p-3 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center gap-2">
                           <Code className="w-4 h-4 text-gold-500" />
@@ -277,7 +283,7 @@ const ChatInput = React.memo(function ChatInput({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (isExceeded) {
+      if (isExceeded && agentType !== 'ماهر العام') {
         setShowUpgradeModal(true);
         return;
       }
@@ -292,7 +298,7 @@ const ChatInput = React.memo(function ChatInput({
   };
 
   const handleSendRequest = () => {
-    if (isExceeded) {
+    if (isExceeded && agentType !== 'ماهر العام') {
       setShowUpgradeModal(true);
       return;
     }
@@ -432,31 +438,31 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   const [selectedSelector, setSelectedSelector] = useState<string | null>(null);
   const [chatToDelete, setChatToDelete] = useState<string | null>(null);
   
-  // Listen for messages from preview iframe
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'ELEMENT_SELECTED') {
-        setSelectedSelector(event.data.selector);
-        setIsSelectionModeActive(false);
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  const lastAttemptedCodeRef = useRef<string | null>(null);
+
+  const getTimestampDate = (ts: any): Date | null => {
+    if (!ts) return null;
+    if (typeof ts.toDate === 'function') return ts.toDate();
+    if (ts.seconds) return new Date(ts.seconds * 1000);
+    if (ts instanceof Date) return ts;
+    if (typeof ts === 'string' || typeof ts === 'number') return new Date(ts);
+    return null;
+  };
 
   const userPlan = userProfile?.plan || 'free';
   
   // Proactive Daily Reset
   useEffect(() => {
     if (!user || !userProfile) return;
-    const lastReset = userProfile?.lastMessageReset?.toDate();
+    const lastReset = getTimestampDate(userProfile?.lastMessageReset);
     const now = new Date();
     if (lastReset && (now.getTime() - lastReset.getTime() > 24 * 60 * 60 * 1000)) {
       const userRef = doc(db, 'users', user.uid);
       updateDoc(userRef, {
         messageCount: 0,
-        lastMessageReset: serverTimestamp()
-      }).catch(err => console.error("Error resetting message count", err));
+        lastMessageReset: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }).catch(err => handleFirestoreError(err, OperationType.UPDATE, 'users'));
     }
   }, [userProfile, user]);
 
@@ -481,6 +487,10 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   const [historyIndex, setHistoryIndex] = useState<number>(-1); // -1 means latest
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isEmailVerified, setIsEmailVerified] = useState(user.emailVerified);
+  const currentChatIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentChatIdRef.current = currentChatId;
+  }, [currentChatId]);
   const [verificationSent, setVerificationSent] = useState(false);
   const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
   
@@ -494,8 +504,10 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
             setIsEmailVerified(true);
             clearInterval(interval);
           }
-        } catch (err) {
-          console.error("Error reloading user", err);
+        } catch (err: any) {
+          if (err?.code !== 'auth/network-request-failed') {
+            console.error("Error reloading user", err);
+          }
         }
       }, 5000);
       return () => clearInterval(interval);
@@ -596,7 +608,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         chatsData = chatsData.slice(0, chatLimit);
       }
       setChats(chatsData);
-      if (chatsData.length > 0 && !currentChatId) {
+      if (chatsData.length > 0 && !currentChatIdRef.current) {
         setCurrentChatId(chatsData[0].id);
         setAgentType(chatsData[0].agentName as any);
       }
@@ -616,7 +628,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
           chatsData = chatsData.slice(0, chatLimit);
         }
         setChats(chatsData);
-        if (chatsData.length > 0 && !currentChatId) {
+        if (chatsData.length > 0 && !currentChatIdRef.current) {
           setCurrentChatId(chatsData[0].id);
           setAgentType(chatsData[0].agentName as any);
         }
@@ -653,9 +665,13 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     return () => unsubscribe();
   }, [currentChatId, messagesLimit]);
 
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
+
   const handleCreateNewChat = async () => {
+    if (isCreatingChat) return;
+    setIsCreatingChat(true);
     try {
-      const newChatRef = await addDoc(collection(db, 'chats'), {
+      const newChatRef = await safeAddDoc(collection(db, 'chats'), {
         userId: user.uid,
         title: 'محادثة جديدة',
         agentName: agentType,
@@ -663,11 +679,15 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         isPinned: false
       });
       setCurrentChatId(newChatRef.id);
+      setMessages([]);
+      setHistoryIndex(-1);
       setIsSidebarOpen(false);
       setIsMobilePreviewOpen(false);
       setActiveTab('preview');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'chats');
+    } finally {
+      setIsCreatingChat(false);
     }
   };
 
@@ -720,7 +740,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     }
   }, []);
 
-  const handleSendMessage = useCallback(async (text: string) => {
+  const handleSendMessage = useCallback(async (text: string, isAutoFix = false) => {
     if ((!text.trim() && attachedImages.length === 0) || isLoading) return;
 
     setIsLoading(true);
@@ -747,7 +767,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       
       let dCount = userProfile?.messageCount || 0;
       let mCount = userProfile?.monthlyMessageCount || 0;
-      let lastReset = userProfile?.lastMessageReset?.toDate();
+      let lastReset = getTimestampDate(userProfile?.lastMessageReset);
       const now = new Date();
 
       // Check for 24h reset
@@ -756,20 +776,21 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         lastReset = now;
         await updateDoc(userRef, {
           messageCount: 0,
-          lastMessageReset: serverTimestamp()
+          lastMessageReset: serverTimestamp(),
+          updatedAt: serverTimestamp()
         });
       }
 
       const totalRemaining = (dLimit - dCount) + (mLimit - mCount);
 
-      if (totalRemaining <= 0) {
+      if (agentType !== 'ماهر العام' && totalRemaining <= 0 && !isAutoFix) {
         setShowUpgradeModal(true);
         setIsLoading(false);
         return;
       }
 
       if (!chatId) {
-        const newChatRef = await addDoc(collection(db, 'chats'), {
+        const newChatRef = await safeAddDoc(collection(db, 'chats'), {
           userId: user.uid,
           title: text ? text.substring(0, 30) + (text.length > 30 ? '...' : '') : 'صورة مرفقة',
           agentName: agentType,
@@ -790,7 +811,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         await updateDoc(doc(db, 'chats', chatId), updates);
       }
 
-      await addDoc(collection(db, `chats/${chatId}/messages`), {
+      await safeAddDoc(collection(db, `chats/${chatId}/messages`), {
         role: 'user',
         content: finalPayload,
         createdAt: serverTimestamp()
@@ -813,13 +834,13 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       const isDiscussion = response.includes('[DISCUSSION_ONLY]');
       const cleanResponse = response.replace(/\[DISCUSSION_ONLY\]/g, '');
 
-      await addDoc(collection(db, `chats/${chatId}/messages`), {
+      await safeAddDoc(collection(db, `chats/${chatId}/messages`), {
         role: 'model',
         content: cleanResponse,
         createdAt: serverTimestamp()
       });
 
-      if (userProfile && !isDiscussion) {
+      if (userProfile && !isDiscussion && !isAutoFix && agentType !== 'ماهر العام') {
         const userRef = doc(db, 'users', user.uid);
         const dLimit = getDailyLimit();
         const dUsed = userProfile?.messageCount || 0;
@@ -853,7 +874,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
           errorMessage = 'عذراً، حدث خطأ تقني غير متوقع أثناء التواصل مع "ماهر". يرجى إعادة المحاولة.';
         }
 
-        await addDoc(collection(db, `chats/${chatId}/messages`), {
+        await safeAddDoc(collection(db, `chats/${chatId}/messages`), {
           role: 'model',
           content: errorMessage,
           createdAt: serverTimestamp()
@@ -865,11 +886,12 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   }, [currentChatId, agentType, user, userProfile, messages, attachedImages, isLoading]);
 
   const isExceeded = useMemo(() => {
+    if (agentType === 'ماهر العام') return false;
     const dLimit = getDailyLimit();
     const mLimit = getMonthlyLimit();
     
     let dUsed = userProfile?.messageCount || 0;
-    const lastReset = userProfile?.lastMessageReset?.toDate();
+    const lastReset = getTimestampDate(userProfile?.lastMessageReset);
     const now = new Date();
     if (lastReset && (now.getTime() - lastReset.getTime() > 24 * 60 * 60 * 1000)) {
        dUsed = 0;
@@ -878,7 +900,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     let mUsed = userProfile?.monthlyMessageCount || 0;
     
     return (dUsed >= dLimit) && (mUsed >= mLimit);
-  }, [userProfile, userPlan]);
+  }, [userProfile, userPlan, agentType]);
 
   const currentChat = chats.find(c => c.id === currentChatId);
 
@@ -891,7 +913,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         if (matches.length > 0) {
           versions.push({
             code: matches[matches.length - 1][1],
-            timestamp: msg.createdAt?.toDate ? msg.createdAt.toDate() : new Date(),
+            timestamp: getTimestampDate(msg.createdAt) || new Date(),
             id: msg.id
           });
         }
@@ -904,9 +926,62 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     ? (historyIndex === -1 ? codeVersions[codeVersions.length - 1].code : codeVersions[historyIndex]?.code || '')
     : '';
 
+  // Listen for messages from preview iframe
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'ELEMENT_SELECTED') {
+        setSelectedSelector(event.data.selector);
+        setIsSelectionModeActive(false);
+      } else if (event.data && event.data.type === 'CODE_ERROR') {
+        if (!currentCode || currentCode === lastAttemptedCodeRef.current || agentType !== "مصنع التطبيقات") return;
+        lastAttemptedCodeRef.current = currentCode;
+        
+        const autoFixPrompt = `[رسالة نظام تلقائية للوكيل ماهر]:
+ظهر الخطأ البرمجي التالي للمستخدم عند تشغيل ومعاينة الكود الحالي:
+"${event.data.message}" ${event.data.line ? `في السطر ${event.data.line}` : ''}
+
+الرجاء فحص الكود الحالي وإصلاح هذا الخطأ بدقة. يجب إرجاع الكود كاملاً بعد الإصلاح. 
+في حال كان الخطأ معقداً ويستحيل إصلاحه برمجياً ضمن السياق الحالي، يرجى كتابة رسالة تعتذر فيها وتوجيه المستخدم لتنزيل ملفات المشروع والبدء في مشروع جديد لاستكمال العمل، وذلك لضمان استقرار التطبيق.`;
+        
+        handleSendMessage(autoFixPrompt, true);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [currentCode, agentType, handleSendMessage]);
+
   const injectedPreviewCode = useMemo(() => {
     if (!currentCode) return '';
-    if (!isSelectionModeActive) return currentCode;
+    
+    let modifiedCode = currentCode;
+
+    const errorCatchingScript = `
+      <script>
+        (function() {
+          let errorCount = 0;
+          window.addEventListener('error', function(e) {
+            if (errorCount > 0) return; // Prevent loop
+            // Ignore resize observer errors which are common and harmless
+            if (e.message && e.message.includes('ResizeObserver')) return;
+            errorCount++;
+            window.parent.postMessage({ type: 'CODE_ERROR', message: e.message, line: e.lineno, col: e.colno }, '*');
+          });
+          window.addEventListener('unhandledrejection', function(e) {
+            if (errorCount > 0) return;
+            errorCount++;
+            window.parent.postMessage({ type: 'CODE_ERROR', message: e.reason ? e.reason.toString() : 'Unhandled Promise Rejection' }, '*');
+          });
+        })();
+      </script>
+    `;
+
+    if (modifiedCode.includes('<head>')) {
+      modifiedCode = modifiedCode.replace('<head>', '<head>' + errorCatchingScript);
+    } else {
+       modifiedCode = errorCatchingScript + modifiedCode;
+    }
+
+    if (!isSelectionModeActive) return modifiedCode;
 
     const selectionScript = `
       <script>
@@ -1042,7 +1117,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     const mLimit = getMonthlyLimit();
     
     let dUsed = userProfile?.messageCount || 0;
-    const lastReset = userProfile?.lastMessageReset?.toDate();
+    const lastReset = getTimestampDate(userProfile?.lastMessageReset);
     if (lastReset && (Date.now() - lastReset.getTime() > 24 * 60 * 60 * 1000)) {
       dUsed = 0;
     }
@@ -1055,12 +1130,21 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     return dRemaining + mRemaining;
   }
 
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+
   const confirmNewProject = async () => {
-    if (!projectTitle.trim()) return;
+    if (!projectTitle.trim() || isCreatingProject) return;
+    const titleToSave = projectTitle.trim();
+    
+    // Close modal immediately and show full-page loading state
+    setShowNamingModal(false);
+    setProjectTitle(''); 
+    setIsCreatingProject(true);
+
     try {
-      const newChatRef = await addDoc(collection(db, 'chats'), {
+      const newChatRef = await safeAddDoc(collection(db, 'chats'), {
         userId: user.uid,
-        title: projectTitle.trim(),
+        title: titleToSave,
         agentName: agentType,
         updatedAt: serverTimestamp()
       });
@@ -1069,11 +1153,11 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       setHistoryIndex(-1);
       setCloudStatus('idle');
       setConnectedService(null);
-      setShowNamingModal(false);
-      setProjectTitle(''); 
       setIsSidebarOpen(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'chats');
+    } finally {
+      setIsCreatingProject(false);
     }
   };
 
@@ -1156,6 +1240,12 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 space-y-1 custom-scrollbar">
+          {isCreatingProject && (
+            <div className="w-full text-right p-3 rounded-xl bg-zinc-800/40 border border-zinc-700/30 flex items-center justify-center gap-2 animate-pulse mb-2">
+              <div className="w-4 h-4 border-2 border-gold-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium text-zinc-400">جاري إنشاء المشروع...</span>
+            </div>
+          )}
           {chats.map(chat => (
             <ChatItem 
               key={chat.id}
@@ -1249,12 +1339,12 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
           </div>
         )}
         
-        <div className="flex-1 flex flex-col md:flex-row min-w-0 h-full overflow-hidden">
+        <div className="flex-1 flex flex-col sm:flex-row min-w-0 h-full overflow-hidden">
           {/* IDE Center (Chat & Commands) */}
           <div className={clsx(
             "flex flex-col border-l border-zinc-800/50 shrink-0 bg-zinc-950/50 h-full transition-all duration-300",
-            (agentType === "ماهر العام" || !isMobilePreviewOpen) ? "w-full" : "w-full md:w-[380px] lg:w-[420px]",
-            isMobilePreviewOpen && agentType === "مصنع التطبيقات" ? "hidden md:flex" : "flex"
+            (agentType === "ماهر العام" || !isMobilePreviewOpen) ? "w-full" : "w-full sm:w-[300px] md:w-[360px] lg:w-[420px]",
+            isMobilePreviewOpen && agentType === "مصنع التطبيقات" ? "hidden sm:flex" : "flex"
           )}>
            <header className="shrink-0 flex items-center justify-between px-4 h-16 border-b border-zinc-800/50 bg-zinc-900/30">
             <div className="flex items-center gap-3">
@@ -1282,12 +1372,17 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
             {agentType === "مصنع التطبيقات" && (
               <button 
                 className="text-zinc-300 hover:text-gold-500 flex items-center gap-2 bg-zinc-900 px-4 py-2 rounded-xl border border-zinc-800/50 transition-colors shadow-lg shadow-gold-500/5" 
-                onClick={() => setIsMobilePreviewOpen(!isMobilePreviewOpen)}
+                onClick={() => {
+                  setIsMobilePreviewOpen(!isMobilePreviewOpen);
+                  setIsSidebarOpen(false);
+                }}
               >
                 {isMobilePreviewOpen ? (
                   <>
-                    <MessageSquare className="w-4 h-4 text-gold-500" />
-                    <span className="text-sm font-bold">الدردشة</span>
+                    <MessageSquare className="w-4 h-4 text-gold-500 sm:hidden" />
+                    <X className="w-4 h-4 text-gold-500 hidden sm:block" />
+                    <span className="text-sm font-bold sm:hidden">الدردشة</span>
+                    <span className="text-sm font-bold hidden sm:inline">إغلاق المعاينة</span>
                   </>
                 ) : (
                   <>
@@ -1346,7 +1441,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
               )}
               <div ref={messagesEndRef} className="h-4" />
               
-              {isExceeded && (
+              {isExceeded && agentType !== 'ماهر العام' && (
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1398,43 +1493,44 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
             "flex-1 flex-col bg-[#0A0A0A] relative h-full transition-all duration-300",
             isMobilePreviewOpen ? "flex" : "hidden"
           )}>
-            <header className="h-16 border-b border-zinc-800/50 flex items-center justify-between px-4 shrink-0 bg-zinc-950/50">
-              <div className="flex items-center gap-2">
+            <header className="h-16 border-b border-zinc-800/50 flex items-center justify-between px-2 sm:px-4 shrink-0 bg-zinc-950/50 overflow-x-auto hide-scrollbar gap-4">
+              <div className="flex items-center gap-2 shrink-0">
                 <button 
-                  className="md:hidden text-zinc-300 hover:text-white p-2 rounded-lg hover:bg-zinc-800 transition-colors" 
+                  className="sm:hidden text-zinc-300 hover:text-white p-2 rounded-lg hover:bg-zinc-800 transition-colors shrink-0" 
                   onClick={() => setIsMobilePreviewOpen(false)}
                   title="العودة للدردشة"
                 >
                   <ArrowRight className="w-5 h-5 ml-1" />
                 </button>
-                <div className="flex items-center gap-1 bg-zinc-900/50 rounded-lg p-1 border border-zinc-800/50">
+                <div className="flex items-center gap-1 bg-zinc-900/50 rounded-lg p-1 border border-zinc-800/50 shrink-0">
                   <button 
                     onClick={() => handleTabSwitch('preview')}
-                    className={clsx("px-4 py-1.5 text-sm font-medium rounded-md transition-colors", activeTab === 'preview' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200")}
+                    className={clsx("px-3 sm:px-4 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap", activeTab === 'preview' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200")}
                   >
                     المعاينة
                   </button>
                    <button 
                     onClick={() => handleTabSwitch('cloud')}
-                    className={clsx("px-4 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5", activeTab === 'cloud' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200")}
+                    className={clsx("px-3 sm:px-4 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap", activeTab === 'cloud' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200")}
                   >
                     {userPlan !== 'elite' && <Lock className="w-3.5 h-3.5 text-gold-500" />}
-                    السحابة (Cloud)
+                    <span className="hidden sm:inline">السحابة (Cloud)</span>
+                    <span className="sm:hidden">السحابة</span>
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                 {activeTab === 'preview' && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button 
                       onClick={() => setPreviewRefreshKey(prev => prev + 1)} 
-                      className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors border border-transparent hover:border-zinc-700"
+                      className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors border border-transparent hover:border-zinc-700 shrink-0"
                       title="تحديث الصفحة"
                     >
                       <RefreshCw className="w-5 h-5" />
                     </button>
-                    <div className="flex items-center gap-1 bg-zinc-900/50 rounded-lg p-1 border border-zinc-800/50 ltr">
+                    <div className="flex items-center gap-1 bg-zinc-900/50 rounded-lg p-1 border border-zinc-800/50 ltr shrink-0">
                       <button onClick={() => setDeviceSize('mobile')} className={clsx("p-1.5 rounded-md transition-colors", deviceSize === 'mobile' ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300")}>
                         <Smartphone className="w-4 h-4" />
                       </button>
@@ -1451,7 +1547,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                 <button 
                   onClick={handleDownload}
                   disabled={!currentCode && userPlan !== 'free'}
-                  className="flex items-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800/50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800/50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                   title="تنزيل الملف"
                 >
                   <Download className="w-5 h-5" />
@@ -1767,20 +1863,37 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                </div>
                
                <h3 className="text-2xl font-bold text-white mb-2">
-                 تجاوزت الحد اليومي
+                 {isExceeded ? 'تجاوزت الحد اليومي' : 'ترقية الباقة'}
                </h3>
                <p className="text-zinc-400 mb-8 max-w-sm">
                  {userPlan === 'pro' 
-                   ? 'لقد استهلكت رصيدك اليومي لباقة المحترف (50 رسالة). قم بالترقية لباقة النخبة للحصول على استخدام غير محدود أو انتظر حتى يكتمل دورة الـ 24 ساعة.'
-                   : 'لقد استهلكت رصيدك اليومي المجاني (3 رسائل). اشترك في باقة المحترف أو النخبة للحصول على رصيد أكبر ومميزات احترافية!'}
+                   ? (isExceeded ? 'لقد استهلكت رصيدك اليومي لباقة المحترف. قم بالترقية لباقة النخبة للحصول على استخدام غير محدود أو انتظر حتى يكتمل دورة الـ 24 ساعة.' : 'أنت الآن على باقة المحترف. قم بالترقية لباقة النخبة للحصول على مميزات السيرفرات وإمكانات أعلى.')
+                   : (isExceeded ? 'لقد استهلكت رصيدك اليومي المجاني (3 أوامر). اشترك في باقة المحترف أو النخبة للحصول على رصيد أكبر ومميزات احترافية!' : 'اختر الباقة المنسبة لاحتياجاتك واستمتع بمميزات متقدمة.')}
                </p>
                
                <div className="w-full space-y-3">
-                 <button className="w-full py-4 rounded-xl font-bold bg-gold-500 text-zinc-950 hover:bg-gold-400 transition-colors">
-                   {userPlan === 'pro' ? 'الترقية لباقة النخبة (200 ريال/شهرياً)' : 'الترقية لباقة المحترف (100 ريال/شهرياً)'}
-                 </button>
-                 <button onClick={() => setShowUpgradeModal(false)} className="w-full py-4 rounded-xl font-medium text-zinc-400 hover:text-white transition-colors">
-                   {userPlan === 'pro' ? 'إلغاء المتابعة بباقة المحترف' : 'إلغاء المتابعة بالباقة المجانية'}
+                 {userPlan !== 'elite' && userPlan !== 'pro' && (
+                   <a 
+                     href={`https://sa.myfatoorah.com/SAU/pa/06051153971267857?CustomerName=${encodeURIComponent(user?.displayName || user?.email?.split('@')[0] || '')}&CustomerEmail=${encodeURIComponent(user?.email || '')}`}
+                     target="_blank" 
+                     rel="noopener noreferrer" 
+                     className="w-full py-4 rounded-xl font-bold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors block border border-gold-500/30"
+                   >
+                     الاشتراك في باقة المحترف (150 ريال/شهرياً)
+                   </a>
+                 )}
+                 {userPlan !== 'elite' && (
+                   <a 
+                     href={`https://sa.myfatoorah.com/SAU/pa/06051153971267957?CustomerName=${encodeURIComponent(user?.displayName || user?.email?.split('@')[0] || '')}&CustomerEmail=${encodeURIComponent(user?.email || '')}`}
+                     target="_blank" 
+                     rel="noopener noreferrer" 
+                     className="w-full py-4 rounded-xl font-bold bg-gold-500 text-zinc-950 hover:bg-gold-400 transition-colors block border shadow-[0_0_20px_rgba(197,160,89,0.3)]"
+                   >
+                     الاشتراك في باقة النخبة (250 ريال/شهرياً)
+                   </a>
+                 )}
+                 <button onClick={() => setShowUpgradeModal(false)} className="w-full py-4 rounded-xl font-medium text-zinc-400 hover:text-white transition-colors block pt-2">
+                   إلغاء النافذة
                  </button>
                </div>
              </motion.div>

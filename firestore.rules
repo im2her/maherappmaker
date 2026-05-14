@@ -32,8 +32,8 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         (isAdmin()) ||
         (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['messageCount', 'monthlyMessageCount', 'lastMessageReset', 'totalMessages', 'updatedAt']) &&
-         incoming().plan == existing().plan &&
-         incoming().subscriptionCount == existing().subscriptionCount &&
+         incoming().get('plan', 'free') == existing().get('plan', 'free') &&
+         incoming().get('subscriptionCount', 0) == existing().get('subscriptionCount', 0) &&
          incoming().updatedAt == request.time)
       );
     }
@@ -56,7 +56,7 @@ service cloud.firestore {
     }
 
     match /chats/{chatId} {
-      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
       allow create: if isSignedIn() && isValidId(chatId) && isValidChat(incoming());
       allow update: if isSignedIn() && isValidId(chatId) && (existing().userId == request.auth.uid || isAdmin()) && isValidChat(incoming()) && (
@@ -71,7 +71,7 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         function isChatOwner() {
-          return get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid || isAdmin();
+          return exists(/databases/$(database)/documents/chats/$(chatId)) && (get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid || isAdmin());
         }
 
         allow read: if isSignedIn() && isChatOwner();

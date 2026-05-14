@@ -6,9 +6,9 @@ import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
   sendPasswordResetEmail,
-  signInWithPhoneNumber,
-  RecaptchaVerifier,
-  ConfirmationResult
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence
 } from 'firebase/auth';
 import { auth, googleProvider } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
@@ -16,17 +16,11 @@ import { Sparkles, ArrowLeft, LogIn, Check, Crown, Code2, MonitorPlay, X, Mail, 
 import { CodeBackground } from './CodeBackground';
 import { PWAInstall } from './PWAInstall';
 
-declare global {
-  interface Window {
-    recaptchaVerifier: any;
-  }
-}
-
 interface LandingProps {
   onLogin: () => void;
 }
 
-type AuthMode = 'options' | 'email_login' | 'email_register' | 'forgot_password' | 'phone_request' | 'phone_verify';
+type AuthMode = 'options' | 'email_login' | 'email_register' | 'forgot_password';
 
 export function Landing({ onLogin }: LandingProps) {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -49,21 +43,7 @@ export function Landing({ onLogin }: LandingProps) {
   // Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
-  const [countdown, setCountdown] = useState(0);
-  const [activeOtpIndex, setActiveOtpIndex] = useState(0);
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (countdown > 0) {
-      timer = setInterval(() => {
-        setCountdown((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [countdown]);
+  const [rememberMe, setRememberMe] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -74,21 +54,11 @@ export function Landing({ onLogin }: LandingProps) {
     return unsubscribe;
   }, [onLogin]);
 
-  useEffect(() => {
-    if (isAuthModalOpen && !window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible'
-      });
-    }
-  }, [isAuthModalOpen]);
-
   const resetForm = () => {
     setErrorMsg('');
     setSuccessMsg('');
     setEmail('');
     setPassword('');
-    setPhoneNumber('');
-    setOtp(['', '', '', '', '', '']);
   };
 
   const handleOpenAuth = () => {
@@ -114,19 +84,9 @@ export function Landing({ onLogin }: LandingProps) {
       case 'auth/network-request-failed':
         return 'خطأ في الاتصال بالشبكة. تحقق من اتصالك.';
       case 'auth/operation-not-allowed':
-        return 'هذه الطريقة غير مفعلة. يرجى إضافة الرابط الحالي في قائمة Authorized Domains في إعدادات Authentication في Firebase Console.';
-      case 'auth/invalid-phone-number':
-        return 'رقم الجوال غير صحيح. تأكد من إدخاله بالصيغة الدولية (مثل +966).';
-      case 'auth/quota-exceeded':
-        return 'تم تجاوز الحصة اليومية للرسائل. يرجى المحاولة غداً.';
+        return 'هذه الطريقة غير مفعلة. يرجى مراجعة إعدادات Authentication في Firebase Console.';
       case 'auth/too-many-requests':
         return 'عمليات كثيرة جداً. تم حظرك مؤقتاً لحماية حسابك.';
-      case 'auth/captcha-check-failed':
-        return 'فشل التحقق (Captcha). يرجى التأكد من إضافة الدومين في Authorized Domains.';
-      case 'auth/invalid-verification-code':
-        return 'رمز التحقق (OTP) غير صحيح أو انتهت صلاحيته.';
-      case 'auth/code-expired':
-        return 'انتهت صلاحية رمز التحقق. يرجى طلب رمز جديد.';
       default:
         return 'حدث خطأ غير متوقع. يرجى المحاولة لاحقاً.';
     }
@@ -136,6 +96,7 @@ export function Landing({ onLogin }: LandingProps) {
     setIsLoading(true);
     setErrorMsg('');
     try {
+      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
       await signInWithPopup(auth, googleProvider);
       onLogin();
     } catch (error: any) {
@@ -151,9 +112,11 @@ export function Landing({ onLogin }: LandingProps) {
     setErrorMsg('');
     try {
       if (authMode === 'email_login') {
+        await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
         await signInWithEmailAndPassword(auth, email, password);
         onLogin();
       } else if (authMode === 'email_register') {
+        await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await sendEmailVerification(userCredential.user);
         setSuccessMsg('تم إنشاء الحساب! يرجى التحقق من بريدك الإلكتروني لتفعيل الحساب.');
@@ -163,100 +126,14 @@ export function Landing({ onLogin }: LandingProps) {
         setSuccessMsg('تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني.');
       }
     } catch (error: any) {
-      console.error("Auth Error:", error);
-      setErrorMsg(mapAuthCodeToMessage(error.code));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handlePhoneRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!phoneNumber) return setErrorMsg('يرجى إدخال رقم الجوال');
-    
-    setIsLoading(true);
-    setErrorMsg('');
-    try {
-      // Robust phone formatting for Saudi Arabia
-      let cleanPhone = phoneNumber.replace(/\s+/g, '').replace(/[^\d+]/g, '');
-      if (cleanPhone.startsWith('0')) {
-        cleanPhone = cleanPhone.substring(1);
-      }
-      if (!cleanPhone.startsWith('+')) {
-        if (!cleanPhone.startsWith('966')) {
-          cleanPhone = `+966${cleanPhone}`;
-        } else {
-          cleanPhone = `+${cleanPhone}`;
-        }
-      }
-      
-      const appVerifier = window.recaptchaVerifier;
-      if (!appVerifier) {
-        throw new Error('recaptcha-not-ready');
-      }
-
-      const confResult = await signInWithPhoneNumber(auth, cleanPhone, appVerifier);
-      setConfirmationResult(confResult);
-      setAuthMode('phone_verify');
-      setSuccessMsg('تم إرسال رمز التحقق إلى رقم جوالك.');
-      setCountdown(60); // بدء العد التنازلي
-    } catch (error: any) {
-      console.error("Phone Auth Error:", error);
-      if (error.message === 'recaptcha-not-ready') {
-        setErrorMsg('يرجى تحديث الصفحة والمحاولة مرة أخرى (خطأ في الكابتشا).');
+      if (error.code === 'auth/email-already-in-use') {
+        setAuthMode('email_login');
+        setErrorMsg('هذا البريد مسجل بالفعل، يرجى تسجيل الدخول.');
       } else {
         setErrorMsg(mapAuthCodeToMessage(error.code));
       }
-      
-      // Cleanup recaptcha on failure to allow retry
-      if (window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier.clear();
-        } catch(e) {}
-        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-          size: 'invisible'
-        });
-      }
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handlePhoneVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!confirmationResult) return setErrorMsg('انتهت صلاحية الجلسة، اطلب رمزاً جديداً.');
-    if (!otp) return setErrorMsg('يرجى إدخال رمز التحقق');
-    
-    setIsLoading(true);
-    setErrorMsg('');
-    try {
-      const otpString = otp.join('');
-      await confirmationResult.confirm(otpString);
-      onLogin();
-    } catch (error: any) {
-      console.error("Verification Error:", error);
-      setErrorMsg(mapAuthCodeToMessage(error.code));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleOtpChange = (value: string, index: number) => {
-    const newOtp = [...otp];
-    newOtp[index] = value.slice(-1);
-    setOtp(newOtp);
-
-    // Dynamic focus
-    if (value && index < 5) {
-      const nextInput = document.getElementById(`otp-${index + 1}`);
-      nextInput?.focus();
-    }
-  };
-
-  const handleOtpKeyDown = (e: React.KeyboardEvent, index: number) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      const prevInput = document.getElementById(`otp-${index - 1}`);
-      prevInput?.focus();
     }
   };
 
@@ -291,14 +168,14 @@ export function Landing({ onLogin }: LandingProps) {
             />
           </motion.div>
           <div className="inline-flex items-center px-4 py-2 rounded-full border border-gold-500/30 bg-gold-500/10 text-gold-500 shadow-[0_0_20px_rgba(197,160,89,0.2)]">
-            <span className="text-sm font-bold tracking-wide">المنصة السعودية لتطوير المنصات</span>
+            <span className="text-sm font-bold tracking-wide">المنصة السعودية لبناء التطبيقات والمنصات</span>
           </div>
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight text-white leading-[1.2]">
-            حوّل أفكارك إلى تطبيقات واقعية <br className="hidden md:block" />
-            مع <span className="text-[#0000ff]">ماهر</span> مصنع التطبيقات وخبيرك الإستراتيجي
+            حوّل أفكارك إلى تطبيقات آيفون وأندرويد واقعية <br className="hidden md:block" />
+            مع <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-orange-600">ماهر</span> مصنع التطبيقات وخبيرك الإستراتيجي
           </h1>
           <p className="text-xl text-zinc-400 leading-relaxed max-w-2xl mx-auto">
-            لا حاجة لكتابة الأكواد من الصفر، تحدث مع ماهر ببساطة، وسيقوم بتصميم وبرمجة واجهاتك فوراً. اختر الباقة المناسبة لك وابدأ رحلتك الآن.
+            لا حاجة لكتابة الأكواد من الصفر، تحدث مع ماهر ببساطة، وسيقوم بتصميم وبرمجة تطبيقاتك فوراً. اختر الباقة المناسبة لك وابدأ رحلتك الآن.
           </p>
 
           <div className="pt-6">
@@ -372,7 +249,7 @@ export function Landing({ onLogin }: LandingProps) {
                 <h3 className="text-2xl font-bold text-white mb-2">المحترف</h3>
                 <p className="text-zinc-400 text-sm h-10">للمطورين ورواد الأعمال الذين يريدون بناء مشاريعهم.</p>
                 <div className="mt-6 flex items-baseline gap-2">
-                  <span className="text-5xl font-bold text-white">100</span>
+                  <span className="text-5xl font-bold text-white">150</span>
                   <span className="text-zinc-500 font-medium">ريال / شهرياً</span>
                 </div>
               </div>
@@ -404,7 +281,7 @@ export function Landing({ onLogin }: LandingProps) {
                 <h3 className="text-2xl font-bold text-white mb-2">النخبة</h3>
                 <p className="text-zinc-400 text-sm h-10">للمشاريع الكبيرة والاحتياجات البرمجية الضخمة.</p>
                 <div className="mt-6 flex items-baseline gap-2">
-                  <span className="text-5xl font-bold text-white">200</span>
+                  <span className="text-5xl font-bold text-white">250</span>
                   <span className="text-zinc-500 font-medium">ريال / شهرياً</span>
                 </div>
               </div>
@@ -451,11 +328,24 @@ export function Landing({ onLogin }: LandingProps) {
               <button 
                 onClick={() => setIsAuthModalOpen(false)}
                 className="absolute top-4 left-4 p-2 text-zinc-500 hover:text-white bg-zinc-800/50 rounded-full transition-colors"
+                title="إغلاق"
               >
                 <X className="w-4 h-4" />
               </button>
-
-              <div id="recaptcha-container"></div>
+              
+              {authMode !== 'options' && (
+                <button 
+                  onClick={() => {
+                    setAuthMode('options');
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                  }}
+                  className="absolute top-4 right-4 p-2 text-zinc-500 hover:text-white bg-zinc-800/50 rounded-full transition-colors"
+                  title="الرجوع للخيارات"
+                >
+                  <ArrowLeft className="w-4 h-4 rtl:rotate-180" />
+                </button>
+              )}
 
               <div className="text-center mb-8">
                 <div className="w-16 h-16 bg-gold-500/10 text-gold-500 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-gold-500/20">
@@ -489,10 +379,6 @@ export function Landing({ onLogin }: LandingProps) {
                     <button onClick={handleGoogleLogin} disabled={isLoading} className="w-full flex items-center justify-center gap-3 bg-white text-zinc-950 font-bold py-3.5 rounded-xl hover:bg-zinc-100 transition-colors">
                       <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
                       المتابعة باستخدام قوقل
-                    </button>
-                    <button onClick={() => setAuthMode('phone_request')} disabled={isLoading} className="w-full flex items-center justify-center gap-3 bg-zinc-800 text-white font-bold py-3.5 rounded-xl border border-zinc-700 hover:bg-zinc-700 transition-colors">
-                      <Phone className="w-5 h-5 text-zinc-400" />
-                      الدخول برقم الجوال
                     </button>
                     <button onClick={() => setAuthMode('email_login')} disabled={isLoading} className="w-full flex items-center justify-center gap-3 bg-zinc-800 text-white font-bold py-3.5 rounded-xl border border-zinc-700 hover:bg-zinc-700 transition-colors">
                       <Mail className="w-5 h-5 text-zinc-400" />
@@ -541,7 +427,16 @@ export function Landing({ onLogin }: LandingProps) {
                         </div>
                       </div>
                       {authMode === 'email_login' && (
-                        <div className="flex justify-start">
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={rememberMe}
+                              onChange={(e) => setRememberMe(e.target.checked)}
+                              className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-gold-500 focus:ring-gold-500 focus:ring-offset-zinc-900"
+                            />
+                            <span className="text-sm text-zinc-400">تذكرني</span>
+                          </label>
                           <button type="button" onClick={() => setAuthMode('forgot_password')} className="text-sm text-gold-500 hover:text-gold-400">نسيت كلمة المرور؟</button>
                         </div>
                       )}
@@ -585,129 +480,11 @@ export function Landing({ onLogin }: LandingProps) {
                       <button type="submit" disabled={isLoading} className="w-full py-3.5 rounded-xl font-bold bg-gold-500 text-zinc-950 hover:bg-gold-400 transition-colors flex justify-center items-center gap-2">
                         {isLoading ? 'جاري الإرسال...' : 'إرسال الرابط للإيميل'}
                       </button>
-                      <div className="relative py-4">
-                        <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-800"></div></div>
-                        <div className="relative flex justify-center text-xs uppercase"><span className="bg-zinc-900 px-2 text-zinc-500">أو استعادة عبر الجوال</span></div>
-                      </div>
-                      <button type="button" onClick={() => setAuthMode('phone_request')} className="w-full py-3 bg-zinc-800 border border-zinc-700 text-white rounded-xl text-sm font-medium hover:bg-zinc-700 transition-colors">
-                        استعادة الدخول عبر رسالة SMS
-                      </button>
                     </form>
                   </motion.div>
                 )}
 
-                {/* Phone Request */}
-                {authMode === 'phone_request' && (
-                  <motion.div
-                    key="phone_req"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                  >
-                    <form onSubmit={handlePhoneRequest} className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-zinc-400 mb-1.5">رقم الجوال</label>
-                        <div className="relative">
-                          <Phone className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                          <input 
-                            type="tel" 
-                            required
-                            value={phoneNumber}
-                            onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
-                            maxLength={10}
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 pr-10 pl-4 text-white focus:outline-none focus:border-gold-500"
-                            placeholder="05XXXXXXXX"
-                            dir="ltr"
-                          />
-                        </div>
-                        <p className="mt-2 text-[10px] text-zinc-500 text-center">سيتم إرسال رمز تحقق برسالة نصية قصير (SMS)</p>
-                      </div>
-                      <button type="submit" disabled={isLoading || countdown > 0} className="w-full py-3.5 rounded-xl font-bold bg-gold-500 text-zinc-950 hover:bg-gold-400 transition-colors flex justify-center items-center gap-2">
-                        {isLoading ? 'جاري الإرسال...' : countdown > 0 ? `أعد الإرسال بعد ${countdown} ثانية` : 'إرسال رمز التحقق'}
-                      </button>
-                      
-                      {errorMsg.includes('غير مفعلة') && (
-                        <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
-                          <p className="text-xs text-amber-500 leading-normal">
-                            <strong>ملاحظة للمطور:</strong> يجب تفعيل خيار "Phone" في صفحة Authentication بجهاز تحكم فيربيس ليعمل هذا الخيار.
-                          </p>
-                        </div>
-                      )}
-                    </form>
-                  </motion.div>
-                )}
 
-                {/* Phone Verify */}
-                {authMode === 'phone_verify' && (
-                  <motion.div
-                    key="phone_verify"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                  >
-                    <form onSubmit={handlePhoneVerify} className="space-y-6">
-                      <div className="text-center">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                          <button 
-                            type="button" 
-                            onClick={() => { setAuthMode('phone_request'); setOtp(['','','','','','']); }}
-                            className="text-gold-500 hover:underline text-xs"
-                          >
-                            تعديل الرقم
-                          </button>
-                          <p className="text-zinc-400 text-sm">
-                            تم إرسال الرمز إلى <span className="text-white font-mono" dir="ltr">{phoneNumber}</span>
-                          </p>
-                        </div>
-                        
-                        <div className="flex justify-between gap-2 max-w-[320px] mx-auto mb-4" dir="ltr">
-                          {otp.map((digit, idx) => (
-                            <input
-                              key={idx}
-                              id={`otp-${idx}`}
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={1}
-                              value={digit}
-                              onChange={(e) => handleOtpChange(e.target.value, idx)}
-                              onKeyDown={(e) => handleOtpKeyDown(e, idx)}
-                              onFocus={() => setActiveOtpIndex(idx)}
-                              className={`w-10 h-14 md:w-12 md:h-16 bg-zinc-950 border-2 rounded-xl text-center text-xl font-bold text-white focus:outline-none transition-all ${
-                                activeOtpIndex === idx ? 'border-gold-500 shadow-[0_0_15px_rgba(197,160,89,0.2)]' : 'border-zinc-800'
-                              }`}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <button 
-                          type="submit" 
-                          disabled={isLoading || otp.some(d => !d)} 
-                          className="w-full py-4 rounded-xl font-bold bg-gold-500 text-zinc-950 hover:bg-gold-400 disabled:opacity-50 disabled:hover:bg-gold-500 transition-all flex justify-center items-center gap-2 shadow-xl"
-                        >
-                          {isLoading ? 'جاري التحقق...' : 'تأكيد الرمز والدخول'}
-                        </button>
-
-                        <div className="text-center">
-                          {countdown > 0 ? (
-                            <p className="text-zinc-500 text-xs">
-                              يمكنك إعادة طلب الرمز بعد <span className="text-gold-500 font-bold">{countdown}</span> ثانية
-                            </p>
-                          ) : (
-                            <button 
-                              type="button" 
-                              onClick={handlePhoneRequest}
-                              className="text-gold-500 hover:text-gold-400 text-sm font-medium transition-colors"
-                            >
-                              لم يصلك الرمز؟ أعد الإرسال الآن
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </form>
-                  </motion.div>
-                )}
               </AnimatePresence>
 
 

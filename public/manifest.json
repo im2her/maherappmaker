@@ -1,0 +1,27 @@
+{
+  "name": "ماهر مصنع التطبيقات",
+  "short_name": "ماهر",
+  "description": "المنصة السعودية لتطوير المنصات مع ماهر مصنع التطبيقات",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "/AppIcon~ios-marketing.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/AppIcon~ios-marketing.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/AppIcon~ios-marketing.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

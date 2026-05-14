@@ -82,92 +82,126 @@ export function AdminDashboard({ user, onClose, onSelectChat }: AdminDashboardPr
     }
   };
 
+  const handleResetAllMessages = async () => {
+    if (confirm('هل أنت متأكد من تصفير الرسائل اليومية لجميع المستخدمين؟')) {
+      setLoading(true);
+      try {
+        const usersSnap = await getDocs(query(collection(db, 'users')));
+        const promises = usersSnap.docs.map(userDoc => 
+          updateDoc(doc(db, 'users', userDoc.id), {
+            messageCount: 0,
+            updatedAt: serverTimestamp()
+          })
+        );
+        await Promise.all(promises);
+        fetchData();
+      } catch (e) {
+        alert("حدث خطأ أثناء التصفير الشامل");
+        setLoading(false);
+      }
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-zinc-950 z-50 overflow-y-auto" dir="rtl">
-      <header className="bg-zinc-900 border-b border-zinc-800 p-4 sticky top-0 z-10 flex items-center justify-between">
+      <header className="bg-zinc-900 border-b border-zinc-800 p-4 sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800/50">
             <ArrowRight className="w-5 h-5" />
           </button>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Settings className="w-5 h-5 text-gold-500" />
-            لوحة تحكم المسؤول
+            لوحة المسؤول
           </h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 w-full sm:w-auto overflow-x-auto hide-scrollbar pb-1 sm:pb-0">
           <button 
             onClick={() => setActiveTab('users')}
-            className={clsx("px-4 py-2 rounded-lg text-sm font-medium transition-colors", activeTab === 'users' ? "bg-gold-500 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}
+            className={clsx("px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0", activeTab === 'users' ? "bg-gold-500 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}
           >
             المستخدمين
           </button>
           <button 
             onClick={() => setActiveTab('chats')}
-            className={clsx("px-4 py-2 rounded-lg text-sm font-medium transition-colors", activeTab === 'chats' ? "bg-gold-500 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}
+            className={clsx("px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0", activeTab === 'chats' ? "bg-gold-500 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700")}
           >
             الدردشات والمشاريع
           </button>
         </div>
       </header>
 
-      <main className="p-6 max-w-7xl mx-auto">
+      <main className="p-4 sm:p-6 max-w-7xl mx-auto">
         {loading ? (
           <div className="flex justify-center p-12">
             <div className="w-8 h-8 border-t-2 border-r-2 border-gold-500 rounded-full animate-spin" />
           </div>
         ) : (
-          <div>
+          <div className="animate-in fade-in duration-300">
             {activeTab === 'users' && (
-              <div className="bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden">
-                <table className="w-full text-sm text-right">
-                  <thead className="bg-zinc-800/50 text-zinc-400 border-b border-zinc-800">
-                    <tr>
-                      <th className="px-6 py-4 font-medium">البريد الإلكتروني</th>
-                      <th className="px-6 py-4 font-medium">الاشتراك</th>
-                      <th className="px-6 py-4 font-medium">يومي (اليوم/الكل)</th>
-                      <th className="px-6 py-4 font-medium">شهري (المستهلك)</th>
-                      <th className="px-6 py-4 font-medium">آخر تصفير</th>
-                      <th className="px-6 py-4 font-medium">مرات الاشتراك</th>
-                      <th className="px-6 py-4 font-medium text-center">إجراءات</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800">
-                    {users.map(u => (
-                      <tr key={u.id} className="hover:bg-zinc-800/30 transition-colors">
-                        <td className="px-6 py-4 text-zinc-200" dir="ltr">{u.email}</td>
-                        <td className="px-6 py-4">
-                          <span className={clsx("px-2 py-1 rounded-md text-xs font-bold", 
-                            u.plan === 'elite' ? "bg-gold-500/20 text-gold-500" :
-                            u.plan === 'pro' ? "bg-blue-500/20 text-blue-400" : "bg-zinc-800 text-zinc-400"
-                          )}>
-                            {u.plan === 'free' ? 'مجانية' : u.plan === 'pro' ? 'احترافية' : 'نخبة'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-zinc-300">
-                          {u.messageCount || 0} / {u.totalMessages || 0}
-                        </td>
-                        <td className="px-6 py-4 text-zinc-300">
-                          {u.monthlyMessageCount || 0}
-                        </td>
-                        <td className="px-6 py-4 text-zinc-400 text-xs">
-                          {u.lastMessageReset?.toDate ? u.lastMessageReset.toDate().toLocaleString('ar-SA') : '---'}
-                        </td>
-                        <td className="px-6 py-4 text-zinc-400">{u.subscriptionCount || 0}</td>
-                        <td className="px-6 py-4 text-center">
-                          <button onClick={() => handleEditUser(u)} className="text-blue-400 hover:bg-blue-400/10 px-3 py-1.5 rounded-lg text-xs ml-2">تعديل</button>
-                          <button onClick={() => handleResetMessages(u.id)} className="text-zinc-400 hover:bg-zinc-800 px-3 py-1.5 rounded-lg text-xs">تصفير الرسائل</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-4">
+                <div className="flex justify-end">
+                  <button 
+                    onClick={handleResetAllMessages}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-white text-sm px-4 py-2 rounded-lg transition-colors border border-zinc-700"
+                  >
+                    تصفير اليومي للجميع
+                  </button>
+                </div>
+                <div className="bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden">
+                  <div className="overflow-x-auto hide-scrollbar">
+                    <table className="w-full text-sm text-right whitespace-nowrap">
+                      <thead className="bg-zinc-800/50 text-zinc-400 border-b border-zinc-800">
+                        <tr>
+                          <th className="px-4 sm:px-6 py-4 font-medium">البريد الإلكتروني</th>
+                          <th className="px-4 sm:px-6 py-4 font-medium">الباقة</th>
+                          <th className="px-4 sm:px-6 py-4 font-medium">يومي (اليوم/الكل)</th>
+                          <th className="px-4 sm:px-6 py-4 font-medium">شهري (المستهلك)</th>
+                          <th className="px-4 sm:px-6 py-4 font-medium">آخر تصفير</th>
+                          <th className="px-4 sm:px-6 py-4 font-medium">الاشتراكات</th>
+                          <th className="px-4 sm:px-6 py-4 font-medium min-w-[200px] text-center">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800">
+                        {users.map(u => (
+                          <tr key={u.id} className="hover:bg-zinc-800/30 transition-colors">
+                            <td className="px-4 sm:px-6 py-4 text-zinc-200" dir="ltr">{u.email}</td>
+                            <td className="px-4 sm:px-6 py-4">
+                              <span className={clsx("px-2 py-1 rounded-md text-xs font-bold", 
+                                u.plan === 'elite' ? "bg-gold-500/20 text-gold-500" :
+                                u.plan === 'pro' ? "bg-blue-500/20 text-blue-400" : "bg-zinc-800 text-zinc-400"
+                              )}>
+                                {u.plan === 'free' ? 'مجانية' : u.plan === 'pro' ? 'احترافية' : 'نخبة'}
+                              </span>
+                            </td>
+                            <td className="px-4 sm:px-6 py-4 text-zinc-300">
+                              {u.messageCount || 0} / {u.totalMessages || 0}
+                            </td>
+                            <td className="px-4 sm:px-6 py-4 text-zinc-300">
+                              {u.monthlyMessageCount || 0}
+                            </td>
+                            <td className="px-4 sm:px-6 py-4 text-zinc-400 text-xs text-center border-l border-zinc-800/20">
+                              {u.lastMessageReset?.toDate ? u.lastMessageReset.toDate().toLocaleString('ar-SA') : (u.lastMessageReset?.seconds ? new Date(u.lastMessageReset.seconds * 1000).toLocaleString('ar-SA') : '---')}
+                            </td>
+                            <td className="px-4 sm:px-6 py-4 text-zinc-400 text-center">{u.subscriptionCount || 0}</td>
+                            <td className="px-4 sm:px-6 py-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <button onClick={() => handleEditUser(u)} className="text-blue-400 bg-blue-400/5 hover:bg-blue-400/20 border border-blue-400/20 px-3 py-1.5 rounded-lg text-xs transition-colors">تعديل الباقة والعدد</button>
+                                <button onClick={() => handleResetMessages(u.id)} className="text-zinc-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs transition-colors">تصفير</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
 
             {activeTab === 'chats' && (
               <div className="space-y-4">
                 {chats.map(chat => (
-                   <div key={chat.id} className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex items-center justify-between">
+                   <div key={chat.id} className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex flex-wrap gap-4 items-center justify-between">
                      <div>
                        <h3 className="text-zinc-200 font-medium mb-1">{chat.title}</h3>
                        <p className="text-xs text-zinc-500">
@@ -183,7 +217,7 @@ export function AdminDashboard({ user, onClose, onSelectChat }: AdminDashboardPr
                          }}
                          className="text-xs bg-gold-500 text-zinc-950 px-3 py-1.5 rounded-lg font-bold hover:bg-gold-400 transition-colors"
                        >
-                         فتح المحادثة
+                         فتح بملفي
                        </button>
                      </div>
                    </div>
