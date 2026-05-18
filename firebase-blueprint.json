@@ -22,9 +22,42 @@
         "createdAt": { "type": "string" }
       },
       "required": ["role", "content", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and usage stats",
+      "type": "object",
+      "properties": {
+        "plan": { "type": "string", "enum": ["free", "pro", "elite"] },
+        "messageCount": { "type": "number" },
+        "monthlyMessageCount": { "type": "number" },
+        "monthlyTotalMessages": { "type": "number" },
+        "lastMessageReset": { "type": "string" },
+        "lastMonthlyReset": { "type": "string" }
+      }
+    },
+    "Broadcast": {
+      "title": "Broadcast",
+      "description": "Global administrator announcements",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "body", "active", "createdAt"]
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "/broadcasts/{broadcastId}": {
+      "schema": { "$ref": "#/entities/Broadcast" },
+      "description": "Admin announcements"
+    },
     "/chats/{chatId}": {
       "schema": { "$ref": "#/entities/Chat" },
       "description": "Chats belonging to users"

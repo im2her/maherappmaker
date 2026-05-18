@@ -8,8 +8,8 @@
 }
 
 @layer base {
-  html {
-    @apply antialiased text-zinc-100 bg-zinc-950 text-[15px] sm:text-[16px];
+  html, body {
+    @apply antialiased text-zinc-100 bg-zinc-950 text-[15px] sm:text-[16px] overflow-x-hidden max-w-full m-0 p-0;
   }
 }
 
@@ -73,4 +73,18 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: theme('colors.zinc.700');
+}
+
+/* Hide Google Translate UI Elements */
+.VIpgJd-ZVi9od-ORHb-OEVmcd {
+  display: none !important;
+}
+.skiptranslate.goog-te-gadget {
+  display: none !important;
+}
+body {
+  top: 0 !important;
+}
+#goog-gt-tt {
+  display: none !important;
 }

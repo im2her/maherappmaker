@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { User, sendEmailVerification, reload } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, increment, deleteDoc, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, increment, deleteDoc, orderBy, limit, getDocs } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType, safeAddDoc } from '../lib/firebase';
 import { processRequest } from '../lib/engine';
+import { requestNotificationPermission, sendNotification, sendAdminNotification } from '../lib/notifications';
 import { motion, AnimatePresence } from 'motion/react';
-import { CodeBackground } from './CodeBackground';
-import { MessageSquare, Plus, LogOut, Code, Sparkles, Send, Paperclip, Menu, X, User as UserIcon, Monitor, Tablet, Smartphone, Download, RotateCcw, Play, ArrowRight, Lock, Crown, Settings, MousePointerClick, Cloud, Database, Globe, Server, CheckCircle2, ChevronRight, Copy, ExternalLink, RefreshCw, Mail, History, Clock, Pin, Trash2, Folder, FileCode } from 'lucide-react';
+import { MessageSquare, Plus, LogOut, Code, Sparkles, Send, Paperclip, Menu, X, User as UserIcon, Monitor, Tablet, Smartphone, Download, RotateCcw, Play, ArrowRight, Lock, Crown, Settings, MousePointerClick, Cloud, Database, Globe, Server, CheckCircle2, Check, ChevronRight, Copy, ExternalLink, RefreshCw, Mail, History, Clock, Pin, Trash2, Folder, FileCode, ArrowDown, BookOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import clsx from 'clsx';
 import JSZip from 'jszip';
 import { AdminDashboard } from './AdminDashboard';
+import { Documentation } from './Documentation';
 import { compressImage } from '../lib/imageUtils';
 
 interface Chat {
@@ -40,6 +41,7 @@ interface ChatItemProps {
 
 const ChatItem = React.memo(function ChatItem({ chat, isActive, onClick, onTogglePin, onDelete }: ChatItemProps) {
   const [showActions, setShowActions] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const startPress = () => {
@@ -59,7 +61,7 @@ const ChatItem = React.memo(function ChatItem({ chat, isActive, onClick, onToggl
     <div 
       className="relative group"
       onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => setShowActions(false)}
+      onMouseLeave={() => { setShowActions(false); setIsConfirmingDelete(false); }}
       onTouchStart={startPress}
       onTouchEnd={endPress}
     >
@@ -79,28 +81,50 @@ const ChatItem = React.memo(function ChatItem({ chat, isActive, onClick, onToggl
         <span className="truncate flex-1 font-medium text-sm">{chat.title || 'مشروع...'}</span>
       </button>
 
-      {(showActions || isActive) && (
+      {(showActions || isActive || isConfirmingDelete) && (
         <div className={clsx(
           "absolute left-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-all bg-zinc-900/90 backdrop-blur-sm rounded-lg p-0.5 border border-zinc-800 shadow-xl",
-          showActions ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-2 pointer-events-none group-hover:opacity-100 group-hover:translate-x-0 group-hover:pointer-events-auto"
+          (showActions || isConfirmingDelete) ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-2 pointer-events-none group-hover:opacity-100 group-hover:translate-x-0 group-hover:pointer-events-auto"
         )}>
-          <button 
-            onClick={onTogglePin}
-            className={clsx(
-              "p-1.5 rounded-md hover:bg-zinc-800 transition-colors",
-              chat.isPinned ? "text-gold-500" : "text-zinc-500 hover:text-white"
-            )}
-            title={chat.isPinned ? "إلغاء التثبيت" : "تثبيت المحادثة"}
-          >
-            <Pin className={clsx("w-3.5 h-3.5", chat.isPinned && "fill-current rotate-45")} />
-          </button>
-          <button 
-            onClick={onDelete}
-            className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-colors"
-            title="حذف المحادثة"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          {!isConfirmingDelete ? (
+            <>
+              <button 
+                onClick={onTogglePin}
+                className={clsx(
+                  "p-1.5 rounded-md hover:bg-zinc-800 transition-colors",
+                  chat.isPinned ? "text-gold-500" : "text-zinc-500 hover:text-white"
+                )}
+                title={chat.isPinned ? "إلغاء التثبيت" : "تثبيت المحادثة"}
+              >
+                <Pin className={clsx("w-3.5 h-3.5", chat.isPinned && "fill-current rotate-45")} />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setIsConfirmingDelete(true); }}
+                className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-colors"
+                title="حذف المحادثة"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center gap-1 px-1 py-0.5">
+              <span className="text-[10px] text-zinc-400 whitespace-nowrap ml-1 font-bold">تأكيد؟</span>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setIsConfirmingDelete(false); onDelete(e); }} 
+                className="p-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white transition-colors border border-red-500/30" 
+                title="نعم، احذف"
+              >
+                <Check className="w-3 h-3" />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); setIsConfirmingDelete(false); }} 
+                className="p-1 rounded bg-zinc-800 text-zinc-400 hover:text-white transition-colors border border-zinc-700/50" 
+                title="إلغاء"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -115,6 +139,8 @@ interface MessageItemProps {
   agentType: string;
   handleSendMessage: (text: string) => void;
   isLoading: boolean;
+  onUndo?: (messageId: string) => void;
+  canUndo?: boolean;
 }
 
 const MessageItem = memo(function MessageItem({ 
@@ -124,7 +150,9 @@ const MessageItem = memo(function MessageItem({
   messagesLength, 
   agentType, 
   handleSendMessage,
-  isLoading 
+  isLoading,
+  onUndo,
+  canUndo
 }: MessageItemProps) {
   let cleanContent = message.content;
   let suggestions: string[] = [];
@@ -178,11 +206,25 @@ const MessageItem = memo(function MessageItem({
                   if (!inline && match) {
                     if (match[1] === 'html-hidden' || (agentType === "مصنع التطبيقات" && match[1] === 'html') || agentType === "ماهر العام") {
                       return (
-                        <div className="ltr text-sm font-inter mt-2 mb-2 p-3 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center gap-2">
-                          <Code className="w-4 h-4 text-gold-500" />
-                          <span className="text-zinc-400 font-medium">
-                            {agentType === "ماهر العام" ? "تم حجب الكود" : "تم تحديث واجهة المستخدم"}
-                          </span>
+                        <div className="ltr text-sm font-inter mt-2 mb-2 p-3 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Code className="w-4 h-4 text-gold-500" />
+                            <span className="text-zinc-400 font-medium">
+                              {agentType === "ماهر العام" ? "تم حجب الكود" : "تم تحديث واجهة المستخدم"}
+                            </span>
+                          </div>
+                          {onUndo && canUndo && agentType === 'مصنع التطبيقات' && (
+                            <button
+                              onClick={() => {
+                                if (onUndo) onUndo(message.id);
+                              }}
+                              className="text-xs px-3 py-1.5 flex items-center gap-1.5 bg-zinc-800 hover:bg-gold-500/20 hover:text-gold-400 text-zinc-300 rounded transition-colors flex-shrink-0 rtl border border-zinc-700 hover:border-gold-500/30"
+                              title="استعادة هذه النسخة وتطبيقها"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              استعادة هذه النسخة
+                            </button>
+                          )}
                         </div>
                       );
                     }
@@ -211,16 +253,19 @@ const MessageItem = memo(function MessageItem({
             </ReactMarkdown>
           </div>
           {suggestions.length > 0 && idx === (Math.min(messagesLength, visibleCount) - 1) && (
-            <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-zinc-800/50">
-              {suggestions.map((sg, i) => (
-                <button
+            <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-zinc-800/20 rtl" id={`suggestions-${message.id}`}>
+              {suggestions.slice(0, 2).map((sg, i) => (
+                <motion.button
                   key={i}
+                  whileHover={{ scale: 1.02, backgroundColor: 'rgba(197, 160, 89, 0.1)' }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => handleSendMessage(sg)}
                   disabled={isLoading}
-                  className="text-sm font-medium px-4 py-2.5 bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-zinc-950 hover:bg-gold-500 hover:border-gold-500 rounded-lg transition-colors text-right max-w-full"
+                  className="text-sm font-medium px-5 py-3 bg-zinc-900/50 border border-gold-500/20 text-gold-200 hover:text-gold-500 hover:border-gold-500 rounded-2xl transition-all text-right max-w-full backdrop-blur-sm shadow-sm flex items-center gap-2"
                 >
+                  <Sparkles className="w-4 h-4 text-gold-500" />
                   {sg}
-                </button>
+                </motion.button>
               ))}
             </div>
           )}
@@ -231,44 +276,317 @@ const MessageItem = memo(function MessageItem({
   );
 });
 
+const LoadingIndicator = ({ agentType }: { agentType?: string }) => {
+  const [textIdx, setTextIdx] = useState(0);
+  const loadingTexts = useMemo(() => {
+    if (agentType === 'ماهر العام') {
+      return [
+        "أبشر، جاري البحث عن أحسن إجابة تبرد كبدك 🔍",
+        "يا بعدي، العلم الحين يوصلك بارد مبرد 🧊",
+        "نحلل العلم ونجهز لك الرد السنع 📊",
+        "لحظات يا بعدي، العلم عندي وبضبطه لك ⏳",
+        "ماهر يزهب رده، الأكيد إنه بيعجبك 💡",
+        "نسخّر الذكاء الاصطناعي لخدمة ربعنا 🤖",
+        "أبشر الحين يجهز الرد اللي يبيض الوجه ✨",
+        "هانت يا الزميل، ماهر قاعد يلقط لك أحسن الهرج 📝",
+        "الوعد قدام، العلم الحين يخلص 🐎",
+        "ماهر يضبط الفناجيل ويجهز العلم ☕",
+        "مير اصبر علي شوي، العلم يبي له ركادة 🧘",
+        "يا بعد حيي، العلم قيد الإنشاء والأكيد إنه زين 🛠️",
+        "أبشر بالخير، العلم الحين يستوي على الجمر 🔥",
+        "ماهر يقرأ اللي بخاطرك ويحطه في قالب سنع 🎨",
+        "يا هلا ومسهلا، جاري تدشين أحسن رد لك 🚩",
+        "أبشر، جاري البحث عن أدق التفاصيل 🔍",
+        "تزهب يا الزميل، الرد الحين يقدح من راسي ⚡",
+        "الوعد بالرد اللي يثلج الصدر، مير اصبر ❄️",
+        "ماهر يضبط الوزنية ويجهز لك العلم وكاد ⚖️",
+        "يا الزميل، العلم يبي له شوية تفكير، هانت 🧠",
+        "أبشر، العلم الحين ينطبخ على نار هادية 🍲",
+        "الوعد الحين يوصلك أحسن الهرج لك ✨",
+        "ماهر يجمع علومه ويجهز لك الرد الجزل 📚",
+        "يا بعدي، الرد الحين يزهب ويكون في خاطرك 🌙",
+        "الأكيد، جاري تلميع الإجابة لتكون كفو 💎",
+        "أبشر، ماهر يضبط لك العلم تضبيط 🛠️",
+        "يا الزميل، الرد الحين يسري له علم 🐎",
+        "جاري تجهيز أحسن العلوم الفنية 💡",
+        "أبشر، العلم الحين يخلص ويسرك 🌟",
+        "يا بعدي، جاري تحضير الرد بكل رقي 🎩",
+        "الأكيد، العلم الحين يكتب بمداد الفهم 🖋️",
+        "أبشر، جاري تصفية العلوم لتناسب مقامك 🌊",
+        "يا الزميل، هانت والرد الحين يشرق نوره 🌅",
+        "جاري بناء الرد على أسس متينة 🏗️",
+        "أبشر، ماهر يجمع لك زبدة الهرج 🥛",
+        "يا بعدي، جاري صياغة الفائدة في قالب إبداعي 💠",
+        "الأكيد، العلم الحين يركد ويطلع أحسن ما فيه 💎",
+        "أبشر، جاري تروية عطش سؤالك بإجابة وافية 🥤",
+        "يا الزميل، الرد الحين يعانق السحاب ☁️",
+        "جاري تزيين العلم بحلي من المنطق 🎀",
+        "أبشر، جاري نسج الرد بخيوط من الحكمة 🧵",
+        "يا بعدي، العلم الحين يبرق وبرقه يسر ⚡",
+        "الأكيد، جاري تحضير القدوع والرد السنع ☕",
+        "أبشر، ماهر يضبط لك الموجة لتكون واضحة 📻",
+        "يا الزميل، جاري غرس العلم في تربة الإفهام 🌱",
+        "جاري حصد النتائج لتكون بين يديك 🌾",
+        "أبشر، العلم الحين يطير بجناحين من نور 🕊️",
+        "يا بعدي، جاري تحويل الأفكار إلى واقع ملموس 🤝",
+        "الأكيد، جاري صيد اللآلئ من بحر المعرفة 🐚",
+        "أبشر، الرد الحين ينبت زهوراً من الفهم 🌹"
+      ];
+    }
+    return [
+      "أبشر بسعدك.. ماهر يقرأ أفكارك، وطلبك عندي! 🧠",
+      "سم، جاري تحضير دلة الكود لبدء الشغل ☕",
+      "الأكواد تتجمع لتصنع شي يرفع الرأس 🚀",
+      "ماهر يصيغ السحر في سطور برمجية سنعة 🪄",
+      "جاري هندسة التطبيق ليكون واجهة تبيض الوجه 🏗️",
+      "نراجع التصاميم ونختار الألوان اللي تفتح النفس 🎨",
+      "لحظات يا الزميل وتكتمل التحفة الفنية ⏳",
+      "نحط اللمسات الجمالية اللي ما تخيب الظن ✨",
+      "تطبيقك يزهب ليرى النور، أبشر بالخير 🌟",
+      "جاري تحويل الهرج إلى أزرار وشاشات تفتح النفس 📱",
+      "الأكيد إن هالفكرة بتكسر الدنيا 🌍",
+      "ندور لك أحسن حزمة برمجية تضبط تطبيقك 📦",
+      "ماهر يلبس نظاراته للتركيز، العلم جزل 👓",
+      "ندمج الإبداع مع المنطق، والشغل نظيف 🧩",
+      "نطلع أحسن العلوم من بنك الأفكار 💡",
+      "جاري رسم الخرائط وتحديد المسارات السهلة 🗺️",
+      "نضبط الأكواد لتكون سريعة كالبرق، قدام ⚡",
+      "نتأكد إن كل شي تمام التمام 🎯",
+      "نضيف رشة إبداع فوق الأكواد 🧚",
+      "نسخّر الذكاء لخدمتك يا بعدي 🤖",
+      "نقنص الأخطاء قبل لا تبين 🐛",
+      "نرفع الهامات والمستويات للقمة 📈",
+      "جاري ضغط الأكواد بذكاء ونباهة 🗜️",
+      "نبني الواجهات لكل الشاشات، العلم واسع 💻",
+      "تجهيز الدواوين (قواعد البيانات) لأحلامك 🗄️",
+      "نكتب التاريخ.. وتطبيق يبيض الوجه 📜",
+      "لحظات ويصير الخيال حقيقة ملموسة 🤝",
+      "نجهز خيولنا السحابية لاستضافة إبداعك ☁️",
+      "ماهر يطلب كبسة ليواصل الشغل بنشاط 🍚",
+      "نعطي الأكواد لمسة كشخة وأناقة 🎩",
+      "جاري استدعاء أفضل العلوم من سباتها 🐉",
+      "نهندس تجربة مستخدم ما تنتسي 🎭",
+      "كل سطر ينكتب بقلب حاضر 🛡️",
+      "نطوي المسافات لننجز بأسرع وقت ⏱️",
+      "نحاكي ملايين الأطراف لنضمن نجاحك 👥",
+      "القهوة تخلص، والشغل يزود حلاه ☕",
+      "جاري إضافة الحركات اللي تفتح العين 🎬",
+      "نضبط الدقة في كل زاوية وضلع 📐",
+      "ماهر شاد حيله، أبشر بالعز 🦅",
+      "نغوص في بحر الأكواد ونجيب لك المحار 🌊",
+      "نجهز منصة الإطراق للغاليين 🛫",
+      "تطبيقك يا بعدي يحصل على جرعة تميز 💉",
+      "نرتب العناصر زينة للناظرين 📸",
+      "نجلب لك أجدد العلوم والتقنيات 🛸",
+      "نلمع الواجهات لين تبرق صقالة 💎",
+      "نحط حجر الأساس لمستقبلك الزاهر 🧱",
+      "التوليفة السحرية في القدر تغلي 🧪",
+      "ماهر يحسبها بالملي لتطبيق يبيض الوجه 🧮",
+      "جاري تجميع القطع بدقة الصايغ 🔧",
+      "نحط الشغف في كل زر نبرمجه 🔥",
+      "الوقت يجري والأكواد تتدفق كنها سيل ⌚",
+      "بسم الله، الشغل الحين يخلص 🤲",
+      "يا الزميل هانت، مير الصبر طيب 🐎",
+      "نضبط الشغل لين يقول بس 🎯",
+      "أبشر، جاري بناء الجسور البرمجية 🌉",
+      "سم، الكود الحين يتنظم مثل الصفوف 🏰",
+      "نضبط التنسيق لين يصير زاهي 🌈",
+      "يا الزميل، جاري فحص الرقاب (الأكواد) 🕵️",
+      "نحط بصمة التميز في كل زاوية 🏺",
+      "سم، جاري تجهيز الخلطة السرية للبرمجة 🧪",
+      "الأكيد إن شغلك الحين يطلع جزل 💎",
+      "نضبط الربط بين الأجزاء، كنه حلقة وصل 🔗",
+      "يا بعد حيي، الكود الحين يسري فيه الروح ✨",
+      "نحمل شعلة الإبداع وننور لك التطبيق 🕯️",
+      "سم، جاري ترتيب الديكورات البرمجية 🛋️",
+      "أبشر، العلم الحين يستوي على الجمر 🔥",
+      "نجهز لك تطبيق يفتح النفس ويسر الخاطر 🌸",
+      "يا الزميل، جاري صقل الأكواد لتكون لامعة 🌟",
+      "سم، نضبط الإطارات البرمجية بحرفية 🖼️",
+      "أبشر، جاري ترويض الخوارزميات الصعبة 🐎",
+      "نحط لك في كل سطر حكمة وفن 🎨",
+      "يا بعدي، جاري الربط مع السحاب بحب ☁️",
+      "على أمرك، جاري تزيين الواجهات بأحلى حلة 👗",
+      "أبشر، الكود الحين ينكتب بماء الذهب ✍️",
+      "نضبط الأداء ليكون كفو في كل الظروف 🛡️",
+      "يا الزميل، جاري تحضير الوليمة البرمجية 🍽️",
+      "على أمرك، جاري تنسيق الخطوط والألوان بذوق ✒️",
+      "أبشر، العلم الحين يخلص ويكون قدوع ☕",
+      "نحط اللمسات اللي تخلي تطبيقك استثنائي 🎖️",
+      "يا بعدي، جاري فحص كل شاردة وواردة 🔍",
+      "على أمرك، جاري عجن الأكواد لتكون لينة وسهلة 🥣",
+      "أبشر، جاري بناء القواعد المتينة لمشروعك 🧱",
+      "نضبط التفاعل لين يكون سلس كنه ماء 💧",
+      "يا الزميل، جاري شحن البطاريات البرمجية 🔋",
+      "على أمرك، جاري تفتيح آفاق جديدة في تطبيقك 🌅",
+      "أبشر، الكود الحين يرقص طرب من حلاه 💃",
+      "نحط في تطبيقك روح الابتكار والجمال 🕊️",
+      "يا بعدي، جاري غزل الأكواد بخيوط من نور 🧵",
+      "على أمرك، جاري تروية عطش تطبيقك للتميز 🥤",
+      "أبشر، العلم الحين ينبت ثمار برمجية 🍏",
+      "نضبط السرعة لتكون كأنها البرق الخاطف 🌩️",
+      "يا الزميل، جاري حياكة الواجهات بدقة 🧶",
+      "على أمرك، جاري تعطير الأكواد بلمسات إبداعية 🌸",
+      "أبشر، جاري بناء صرح تقني يشار له بالبنان 🏛️",
+      "نحط لك في كل زر قصة نجاح 📖",
+      "يا بعد حيي، جاري إيقاظ مارد البرمجة لخدمتك 🧞",
+      "على أمرك، جاري تحويل الأحلام إلى كود ملموس 💭",
+      "أبشر، العلم الحين يبرق وبرقه يسر ⚡",
+      "نضبط التوازن البرمجي ليكون ممتاز ⚖️",
+      "يا الزميل، جاري صيد الأخطاء بشبكة ذكية 🕸️",
+      "على أمرك، جاري تنقية الأكواد من كل الشوائب 🌊",
+      "أبشر، العلم الحين يسرق الأنظار بجماله 😍",
+      "نحط لك في تطبيقك بصمة ما تتنسى 👣",
+      "يا بعدي، جاري تلوين تطبيقك بألوان الفرح 🎨",
+      "على أمرك، جاري هندسة الابتسامة في كل واجهة 😊",
+      "أبشر، الكود الحين يتنفس هواء النجاح 🌬️",
+      "نضبط الاتصال ليكون وثيق وقوي 🧱",
+      "يا الزميل، جاري غرس بذور الإبداع في كودك 🌱",
+      "على أمرك، جاري حصاد أحسن النتائج لمشروعك 🌾",
+      "أبشر، العلم الحين يطير بجناحين من نور 🕊️",
+      "نحط لك في تطبيقك لمسة من المستقبل 🚀",
+      "يا بعد حيي، جاري إشعال فتيل العبقرية التقنية 🧨",
+      "على أمرك، جاري تدريب الأكواد لتكون ذكية ولبقة 🧠",
+      "أبشر، العلم الحين ينساب كنه شلال 🌊",
+      "نضبط العمق البرمجي ليكون له أثر ⚓",
+      "يا الزميل، جاري فتح بوابات النجاح لتطبيقك 🔓",
+      "على أمرك، جاري رسم ملامح العظمة في مشروعك 🗿",
+      "أبشر، الكود الحين يتجلى في أبهى صورة 💎",
+      "نحط لك في الواجهة فنون تخطف الألباب 🎭",
+      "يا بعدي، جاري نسج خيوط المستقبل في كودك 🛰️",
+      "على أمرك، جاري ترويض التقنيات الحديثة لرضاك 🦁",
+      "أبشر، العلم الحين يزهو بوشاح التميز 🏅",
+      "نضبط الإيقاع البرمجي ليكون منسجم 🎵",
+      "يا الزميل، جاري استخراج لآلئ الكود من الأعماق 🐚",
+      "على أمرك، جاري تزيين تطبيقك بجواهر الابتكار 💍",
+      "أبشر، الكود الحين يشرق كنه شمس الضحى ☀️",
+      "نحط لك في كل سطر سحر من نوع خاص ✨",
+      "يا بعد حيي، جاري إرساء قواعد المجد لتطبيقك 🏗️",
+      "على أمرك، جاري تحليق تطبيقك في سماء الإبداع 🦅",
+      "أبشر، العلم الحين يسري في عروق التكنولوجيا 🩸",
+      "نضبط البوصلة البرمجية نحو القمة 🧭",
+      "يا الزميل، جاري زراعة ورود الجمال في واجهاتك 🌹",
+      "على أمرك، جاري سكب الإبداع في قوالب تقنية 🏺",
+      "أبشر، الكود الحين ينبض بالحياة والنشاط 💓",
+      "نحط لك في تطبيقك مفتاح كل الأبواب 🔑",
+      "يا بعدي، جاري رسم لوحة فنية بأدوات برمجية 🖌️",
+      "على أمرك، جاري تطويع الأرقام لتصنع العجب 🔢",
+      "أبشر، العلم الحين يرتدي حلة النجاح البهية 👔",
+      "نضبط الزوايا لتكون حادة ودقيقة 🎯",
+      "يا الزميل، جاري استضافة أحسن الأفكار في كودك 🏠",
+      "على أمرك، جاري إطلاق سراح المارد البرمجي لتحقيق حلمك 🧞‍♂️",
+      "أبشر، العلم الحين يسطع نوره في كل مكان 💡",
+      "نحط لك في تطبيقك روح المغامرة والنجاح 🧗",
+      "على أمرك، جاري فك شيفرات الصعاب بكل مهارة 🔓",
+      "أبشر، العلم الحين يرتوي من نبع المعرفة ⛲",
+      "يا بعدي، جاري ترويض سطور البرمجة لتكون طوع أمرك 🐅",
+      "على أمرك، جاري بناء عالمك التقني بكل حب وشغف ❤️",
+      "أبشر، الكود الحين ينمو ويزدهر كنه بستان زاهر 🌳",
+      "نضبط الدقة لتصل لمستوى العالمية 🌍",
+      "يا الزميل، جاري حماية كودك بأمتن الدروع 🛡️",
+      "على أمرك، جاري صقل الواجهة لتلمع كالنجم القطبي ⭐",
+      "أبشر، العلم الحين يفيض بلمسات الرقي والجمال 💎",
+      "نحط لك في كل واجهة لمحة من الإبداع الخالد 🎨",
+      "يا بعد حيي، جاري ربط الخيوط البرمجية بإتقان الصايغ 🧵",
+      "على أمرك، جاري تحويل كل تحدي إلى فرصة نجاح باهرة 🥇",
+      "أبشر، الكود الحين يتناغم مع أحلامك الكبيرة 🌈",
+      "نضبط التنسيق ليكون متناسق كعقد من اللؤلؤ 📿",
+      "يا الزميل، جاري استكشاف آفاق جديدة لمشروعك 🔭",
+      "على أمرك، جاري تزيين التطبيق بأبهى الألوان والظلال 🖌️",
+      "أبشر، العلم الحين ينساب بكل سلاسة ويسر 💧",
+      "نحط لك في تطبيقك سر التميز والنجاح الدائم 🗝️",
+      "يا بعدي، جاري تلميع كل سطر برمجي ليكون واضحاً 💡",
+      "على أمرك، جاري بناء تطبيقك ليكون منارة للتكنولوجيا 🗼",
+      "أبشر، الكود الحين يرقص فرحاً بقرب الاكتمال ✨",
+      "نضبط الأداء ليكون سريعاً كالبرق في كبد السماء ⚡",
+      "يا الزميل، جاري وضع اللمسات النهائية التي تذهل العقول 🎭",
+      "على أمرك، جاري تحضير تطبيقك ليكون رفيق نجاحك الدائم 🤝"
+    ];
+  }, [agentType]);
+
+  useEffect(() => {
+    // Pick a random starting point
+    const setRandomText = () => {
+      setTextIdx(prev => {
+        let nextIdx;
+        do {
+          nextIdx = Math.floor(Math.random() * loadingTexts.length);
+        } while (nextIdx === prev && loadingTexts.length > 1);
+        return nextIdx;
+      });
+    };
+
+    setRandomText();
+    const interval = setInterval(setRandomText, 4500);
+    return () => clearInterval(interval);
+  }, [loadingTexts]);
+
+  return (
+    <div className="flex w-full justify-start mt-2 mb-4">
+      <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl px-5 py-3 flex items-center gap-4 shadow-lg">
+        <div className="flex items-center gap-1.5 direction-ltr">
+          <div className="w-2 h-2 rounded-full bg-gold-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+          <div className="w-2 h-2 rounded-full bg-gold-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+          <div className="w-2 h-2 rounded-full bg-gold-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+        </div>
+        <AnimatePresence mode="wait">
+          <motion.span 
+            key={textIdx}
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            className="text-gold-400 text-sm font-medium tracking-wide"
+          >
+            {loadingTexts[textIdx]}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
 const ChatInput = React.memo(function ChatInput({ 
   isLoading, 
   isExceeded, 
   cooldown, 
   onSendMessage, 
+  onStop,
   agentType,
   attachedImages,
   setAttachedImages,
   handleFileSelect,
   isSelectionModeActive,
   setIsSelectionModeActive,
-  selectedSelector,
-  setSelectedSelector,
+  selectedSelectors,
+  setSelectedSelectors,
   activeTab,
   setActiveTab,
   handleDrop,
   handleDragOver,
   setShowUpgradeModal,
-  currentChatId
+  currentChatId,
+  setIsMobilePreviewOpen
 }: {
   isLoading: boolean;
   isExceeded: boolean;
   cooldown: number;
   onSendMessage: (text: string) => void;
+  onStop: () => void;
   agentType: string;
   attachedImages: string[];
   setAttachedImages: React.Dispatch<React.SetStateAction<string[]>>;
   handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   isSelectionModeActive: boolean;
   setIsSelectionModeActive: (val: boolean) => void;
-  selectedSelector: string | null;
-  setSelectedSelector: (val: string | null) => void;
+  selectedSelectors: string[];
+  setSelectedSelectors: React.Dispatch<React.SetStateAction<string[]>>;
   activeTab: string;
   setActiveTab: (val: any) => void;
   handleDrop: (e: React.DragEvent) => void;
   handleDragOver: (e: React.DragEvent) => void;
   setShowUpgradeModal: (val: boolean) => void;
   currentChatId: string | null;
+  setIsMobilePreviewOpen: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
   const [inputMessage, setInputMessage] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -281,23 +599,14 @@ const ChatInput = React.memo(function ChatInput({
   }, [currentChatId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (isExceeded && agentType !== 'ماهر العام') {
-        setShowUpgradeModal(true);
-        return;
-      }
-      if (inputMessage.trim() || attachedImages.length > 0) {
-        onSendMessage(inputMessage);
-        setInputMessage('');
-        if (inputRef.current) {
-          inputRef.current.style.height = '44px';
-        }
-      }
-    }
+    // Default textarea behavior will insert a new line on 'Enter'.
   };
 
   const handleSendRequest = () => {
+    if (isLoading) {
+      onStop();
+      return;
+    }
     if (isExceeded && agentType !== 'ماهر العام') {
       setShowUpgradeModal(true);
       return;
@@ -333,21 +642,37 @@ const ChatInput = React.memo(function ChatInput({
         </div>
       )}
       <AnimatePresence>
-        {selectedSelector && (
+        {selectedSelectors.length > 0 && (
           <motion.div 
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 5 }}
-            className="flex items-center gap-2 mb-2 p-2 bg-gold-500/10 border border-gold-500/30 rounded-lg text-xs"
+            className="flex flex-col gap-2 mb-2 p-2 bg-gold-500/10 border border-gold-500/30 rounded-lg text-xs"
           >
-            <MousePointerClick className="w-3.5 h-3.5 text-gold-500" />
-            <span className="text-gold-500 font-medium flex-1 truncate">تم تحديد عنصر: <span className="font-mono opacity-80">{selectedSelector}</span></span>
-            <button 
-              onClick={() => setSelectedSelector(null)}
-              className="p-1 hover:bg-gold-500/20 rounded text-gold-500 transition-colors"
-            >
-              <X className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-2">
+              <MousePointerClick className="w-3.5 h-3.5 text-gold-500 shrink-0" />
+              <span className="text-gold-500 font-medium">تم تحديد {selectedSelectors.length} عنصر</span>
+              <button 
+                onClick={() => setSelectedSelectors([])}
+                className="mr-auto p-1 hover:bg-gold-500/20 rounded text-gold-500 transition-colors"
+                title="إزالة جميع التحديدات"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="max-h-24 overflow-y-auto custom-scrollbar flex flex-col gap-1 pr-1">
+              {selectedSelectors.map((selector, i) => (
+                <div key={i} className="flex flex-row-reverse items-center gap-2 text-right">
+                  <span className="font-mono opacity-80 text-gold-500/80 truncate flex-1 block" dir="ltr">{selector}</span>
+                  <button 
+                    onClick={() => setSelectedSelectors(prev => prev.filter(s => s !== selector))}
+                    className="p-1 hover:bg-gold-500/20 rounded text-gold-500 transition-colors shrink-0"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -394,8 +719,10 @@ const ChatInput = React.memo(function ChatInput({
               <button 
                 onClick={() => {
                   if (activeTab !== 'preview') setActiveTab('preview');
-                  setIsSelectionModeActive(!isSelectionModeActive);
-                  setSelectedSelector(null);
+                  const nextState = !isSelectionModeActive;
+                  setIsSelectionModeActive(nextState);
+                  if (nextState && setIsMobilePreviewOpen) setIsMobilePreviewOpen(true);
+                  setSelectedSelectors([]);
                 }}
                 className={clsx(
                   "p-2.5 transition-colors rounded-xl flex items-center gap-1.5",
@@ -404,17 +731,30 @@ const ChatInput = React.memo(function ChatInput({
                 title="تعديل يدوي (تحديد عنصر)"
               >
                 <MousePointerClick className="w-5 h-5" />
-                {selectedSelector && <span className="w-2 h-2 rounded-full bg-gold-500 animate-pulse" />}
+                {selectedSelectors.length > 0 && <span className="w-2 h-2 rounded-full bg-gold-500 animate-pulse" />}
               </button>
             )}
           </div>
           <button 
             onClick={handleSendRequest}
-            disabled={(!inputMessage.trim() && attachedImages.length === 0 && !isExceeded) || isLoading || cooldown > 0}
-            className="px-4 py-2.5 bg-zinc-100 hover:bg-white text-zinc-950 font-bold text-sm rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 group shadow-lg active:scale-95"
+            disabled={(!inputMessage.trim() && attachedImages.length === 0 && !isExceeded && !isLoading) || cooldown > 0}
+            className={clsx(
+              "px-4 py-2.5 font-bold text-sm rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 group shadow-lg active:scale-95 min-w-[80px] justify-center",
+              isLoading 
+                ? "bg-red-500 hover:bg-red-600 text-white" 
+                : "bg-zinc-100 hover:bg-white text-zinc-950"
+            )}
           >
-            <span>{isExceeded ? 'ترقية' : cooldown > 0 ? `انتظر (${cooldown})` : 'إرسال'}</span>
-            {isExceeded ? <Crown className="w-4 h-4" /> : <Send className="w-4 h-4 rtl:rotate-180" />}
+            <span>
+              {isLoading ? 'إيقاف' : isExceeded ? 'ترقية' : cooldown > 0 ? `انتظر (${cooldown})` : 'إرسال'}
+            </span>
+            {isLoading ? (
+              <RotateCcw className="w-4 h-4 animate-spin-reverse" />
+            ) : isExceeded ? (
+              <Crown className="w-4 h-4" />
+            ) : (
+              <Send className="w-4 h-4 rtl:rotate-180" />
+            )}
           </button>
         </div>
       </div>
@@ -435,10 +775,19 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   const [isMobilePreviewOpen, setIsMobilePreviewOpen] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [isSelectionModeActive, setIsSelectionModeActive] = useState(false);
-  const [selectedSelector, setSelectedSelector] = useState<string | null>(null);
-  const [chatToDelete, setChatToDelete] = useState<string | null>(null);
+  const [selectedSelectors, setSelectedSelectors] = useState<string[]>([]);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   
+  const abortControllerRef = useRef<AbortController | null>(null);
   const lastAttemptedCodeRef = useRef<string | null>(null);
+
+  const handleStopRequest = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+    }
+  }, []);
 
   const getTimestampDate = (ts: any): Date | null => {
     if (!ts) return null;
@@ -451,18 +800,37 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
 
   const userPlan = userProfile?.plan || 'free';
   
-  // Proactive Daily Reset
+  // Proactive Daily & Monthly Reset
   useEffect(() => {
     if (!user || !userProfile) return;
     const lastReset = getTimestampDate(userProfile?.lastMessageReset);
+    const lastMonthlyReset = getTimestampDate(userProfile?.lastMonthlyReset);
     const now = new Date();
+    
+    const updates: any = {};
+    
+    // Daily Reset (24h)
     if (lastReset && (now.getTime() - lastReset.getTime() > 24 * 60 * 60 * 1000)) {
+      updates.messageCount = 0;
+      updates.lastMessageReset = serverTimestamp();
+    }
+    
+    // Monthly Reset (1st of month)
+    const isNewMonth = lastMonthlyReset && (
+      now.getMonth() !== lastMonthlyReset.getMonth() || 
+      now.getFullYear() !== lastMonthlyReset.getFullYear()
+    );
+    
+    if (!lastMonthlyReset || isNewMonth) {
+      updates.monthlyMessageCount = 0;
+      updates.monthlyTotalMessages = 0; // New field for cost tracking
+      updates.lastMonthlyReset = serverTimestamp();
+    }
+
+    if (Object.keys(updates).length > 0) {
+      updates.updatedAt = serverTimestamp();
       const userRef = doc(db, 'users', user.uid);
-      updateDoc(userRef, {
-        messageCount: 0,
-        lastMessageReset: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      }).catch(err => handleFirestoreError(err, OperationType.UPDATE, 'users'));
+      updateDoc(userRef, updates).catch(err => handleFirestoreError(err, OperationType.UPDATE, 'users'));
     }
   }, [userProfile, user]);
 
@@ -474,6 +842,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     }
   }, [cooldown]);
 
+  const [showDocumentation, setShowDocumentation] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   
@@ -481,6 +850,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   const [deviceSize, setDeviceSize] = useState<DeviceSize>('desktop');
   const [showNamingModal, setShowNamingModal] = useState<boolean>(false);
   const [projectTitle, setProjectTitle] = useState<string>('');
+  const [projectType, setProjectType] = useState<string>('تطبيق آيفون وأندرويد');
   const [activeTab, setActiveTab] = useState<'preview' | 'cloud'>('preview');
   const [cloudStatus, setCloudStatus] = useState<'idle' | 'provisioning-firebase' | 'provisioning-gcloud' | 'connected'>('connected');
   const [connectedService, setConnectedService] = useState<'firebase' | 'gcloud' | null>('gcloud');
@@ -493,6 +863,42 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   }, [currentChatId]);
   const [verificationSent, setVerificationSent] = useState(false);
   const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
+
+  // Auto-detect view mode based on project type
+  useEffect(() => {
+    if (!projectType) return;
+    const lowerType = projectType.toLowerCase();
+    if (lowerType.includes('تطبيق') || lowerType.includes('موبايل') || lowerType.includes('آيفون') || lowerType.includes('أندرويد')) {
+      setDeviceSize('mobile');
+    } else {
+      setDeviceSize('desktop');
+    }
+  }, [projectType]);
+
+  // Request notification permissions
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
+
+  // Admin Broadcast Listener
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'broadcasts'),
+      where('active', '==', true),
+      orderBy('createdAt', 'desc'),
+      limit(1)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          sendAdminNotification(data.title || 'تنبيه من ماهر', data.body || '');
+        }
+      });
+    }, (err) => console.error("Broadcast error:", err));
+    return () => unsubscribe();
+  }, [user]);
   
   // Refresh verification status
   useEffect(() => {
@@ -530,15 +936,18 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
 
   // Auto-scroll inside chat
   const [messagesLimit, setMessagesLimit] = useState(50);
-  const [visibleCount, setVisibleCount] = useState(5);
+  const [visibleCount, setVisibleCount] = useState(20);
   const [chatLimit, setChatLimit] = useState(30);
   const lastScrollCall = useRef(0);
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    setShowScrollButton(scrollHeight - scrollTop - clientHeight > 300);
+
     const now = Date.now();
     if (now - lastScrollCall.current < 200) return;
     lastScrollCall.current = now;
 
-    if (e.currentTarget.scrollTop === 0) {
+    if (scrollTop === 0) {
       if (visibleCount < messages.length) {
         setVisibleCount(prev => prev + 5);
       } else if (messages.length >= messagesLimit) {
@@ -552,26 +961,35 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   const prevMessagesLimit = useRef<number>(messagesLimit);
 
   useEffect(() => {
-    setVisibleCount(5);
+    setVisibleCount(20);
   }, [currentChatId]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
       if (prevChatRef.current !== currentChatId) {
-        // Snap to bottom on chat switch
-        messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
+        // Prepare for new chat load
         prevChatRef.current = currentChatId;
-        prevMessagesLength.current = messages.length;
+        prevMessagesLength.current = 0; // Reset length for the new chat
         prevMessagesLimit.current = messagesLimit;
       } else if (messagesLimit > prevMessagesLimit.current) {
          // Data load from scrolling up, don't scroll to bottom
          prevMessagesLength.current = messages.length;
          prevMessagesLimit.current = messagesLimit;
       } else if (messages.length > prevMessagesLength.current) {
-        // Smooth scroll only when NEW messages arrive (e.g. from user or bot)
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-        prevMessagesLength.current = messages.length;
-        setVisibleCount(5); // Reset visible count to 5 when new message arrives to keep it clean
+        // Decide whether to snap or smooth scroll
+        const isInitialLoad = prevMessagesLength.current === 0;
+        
+        if (isInitialLoad) {
+          // Snap to bottom immediately for the first batch of messages
+          messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
+          prevMessagesLength.current = messages.length;
+        } else {
+          // Smooth scroll only when NEW messages arrive during conversation
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+          const diff = messages.length - prevMessagesLength.current;
+          prevMessagesLength.current = messages.length;
+          setVisibleCount(prev => prev + diff); 
+        }
       } else {
         prevMessagesLength.current = messages.length;
       }
@@ -595,6 +1013,8 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       );
     }
     
+    let unsubscribeFallback: (() => void) | null = null;
+    let fallbackQ;
     const unsubscribe = onSnapshot(q, (snapshot) => {
       let chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
       chatsData.sort((a, b) => {
@@ -614,8 +1034,8 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       }
     }, (error) => {
       // Fallback
-      const fallbackQ = query(collection(db, 'chats'), where('userId', '==', user.uid));
-      onSnapshot(fallbackQ, (snapshot) => {
+      fallbackQ = query(collection(db, 'chats'), where('userId', '==', user.uid));
+      unsubscribeFallback = onSnapshot(fallbackQ, (snapshot) => {
         let chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Chat));
         chatsData.sort((a, b) => {
           if (a.isPinned && !b.isPinned) return -1;
@@ -635,7 +1055,10 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       });
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (unsubscribeFallback) unsubscribeFallback();
+    };
   }, [user.uid, chatLimit]);
 
   // Read messages for current chat
@@ -704,8 +1127,16 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     }
   };
 
-  const confirmDeleteChat = async (chatId: string) => {
+  const handleDeleteChat = async (e: React.MouseEvent, chatId: string) => {
+    e.stopPropagation();
+    e.preventDefault();
     try {
+      // First delete messages subcollection
+      const messagesSnap = await getDocs(collection(db, `chats/${chatId}/messages`));
+      const messagePromises = messagesSnap.docs.map(m => deleteDoc(m.ref));
+      await Promise.all(messagePromises);
+      
+      // Then delete the chat doc
       await deleteDoc(doc(db, 'chats', chatId));
       if (currentChatId === chatId) {
         setCurrentChatId(null);
@@ -713,15 +1144,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'chats');
-    } finally {
-      setChatToDelete(null);
     }
-  };
-
-  const handleDeleteChat = async (e: React.MouseEvent, chatId: string) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setChatToDelete(chatId);
   };
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -744,12 +1167,45 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     if ((!text.trim() && attachedImages.length === 0) || isLoading) return;
 
     setIsLoading(true);
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const normalizedText = text.toLowerCase();
+    
+    // خوارزمية ذكية للتحويل التلقائي بين الأنماط لضمان عدم التحايل وضمان أفضل تجربة
+    const executionKeywords = ['ابن', 'عدل', 'اضف', 'غير', 'كود', 'برمج', 'صمم', 'سوي', 'أريد تطبيق', 'build', 'create', 'update', 'add', 'fix', 'code', 'make'];
+    const discussionKeywords = ['وش رايك', 'كيف', 'اشرح', 'وش هو', 'علمني', 'استشارة', 'وش تنصح', 'خطط', 'فكرة', 'discuss', 'explain', 'suggest', 'what is', 'how to'];
+
+    const isExecutionIntent = executionKeywords.some(k => normalizedText.includes(k));
+    const isDiscussionIntent = discussionKeywords.some(k => normalizedText.includes(k));
+
+    let effectiveAgentType = agentType;
+    if (isDiscussionIntent && !isExecutionIntent && agentType === 'مصنع التطبيقات') {
+      effectiveAgentType = 'ماهر العام';
+      setAgentType('ماهر العام');
+    } else if (isExecutionIntent && agentType === 'ماهر العام') {
+      effectiveAgentType = 'مصنع التطبيقات';
+      setAgentType('مصنع التطبيقات');
+    }
+
+    const gameKeywords = ['لعبة', 'لعبه', 'game', 'games', 'gaming', 'قمار', 'مراهنة'];
+    const isGameRequest = gameKeywords.some(keyword => normalizedText.includes(keyword));
+    
+    if (isGameRequest && effectiveAgentType === 'مصنع التطبيقات') {
+      alert('عذراً، يمنع منعاً باتاً إنشاء أو تعديل الألعاب في منصة ماهر للحفاظ على استقرار النظام.');
+      setIsLoading(false);
+      return;
+    }
 
     let finalPayload = text;
     
-    if (selectedSelector) {
-      finalPayload += `\n\n[AIS_METADATA_SECTION_START]\nCSS selector: ${selectedSelector}\n[AIS_METADATA_SECTION_END]`;
-      setSelectedSelector(null);
+    if (selectedSelectors.length > 0) {
+      finalPayload += `\n\n[AIS_METADATA_SECTION_START]\n`;
+      selectedSelectors.forEach((sel, i) => {
+        finalPayload += `CSS selector ${i + 1}: ${sel}\nCSS ${i + 1}: {\n\n}\n`;
+      });
+      finalPayload += `[AIS_METADATA_SECTION_END]`;
+      setSelectedSelectors([]);
       setIsSelectionModeActive(false);
     }
 
@@ -783,7 +1239,13 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
 
       const totalRemaining = (dLimit - dCount) + (mLimit - mCount);
 
-      if (agentType !== 'ماهر العام' && totalRemaining <= 0 && !isAutoFix) {
+      // تذكير الرصيد المنخفض + دعوة للتقييم/الثناء لجلب مكافأة (فقط للمشتركين)
+      const currentUserPlan = userProfile?.plan || 'free';
+      if (totalRemaining === 3 && !isAutoFix && effectiveAgentType !== 'ماهر العام' && (currentUserPlan === 'pro' || currentUserPlan === 'elite')) {
+        finalPayload += "\n\n[إرشاد مخفي لماهر: رصيد المستخدم وصل لـ 3 رسائل فقط. استطلع رأيه فيك بذكاء؛ إذا كان معجباً بك، شجعه على التعبير عن ذلك، وإذا لم يعجبه الحال، خذها من باب التحدي التقني. تذكر أنك تملك صلاحية منحه 3 نقاط إضافية برصيد حقيقي عبر وسم [GRANT_REWARD_3] لتشجيعه على إكمال مشروعه.]";
+      }
+
+      if (effectiveAgentType !== 'ماهر العام' && totalRemaining <= 0 && !isAutoFix) {
         setShowUpgradeModal(true);
         setIsLoading(false);
         return;
@@ -793,7 +1255,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         const newChatRef = await safeAddDoc(collection(db, 'chats'), {
           userId: user.uid,
           title: text ? text.substring(0, 30) + (text.length > 30 ? '...' : '') : 'صورة مرفقة',
-          agentName: agentType,
+          agentName: effectiveAgentType,
           updatedAt: serverTimestamp()
         });
         chatId = newChatRef.id;
@@ -802,7 +1264,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         const chat = chats.find(c => c.id === chatId);
         const updates: any = {
           updatedAt: serverTimestamp(),
-          agentName: agentType
+          agentName: effectiveAgentType
         };
         
         if (chat && chat.title === 'محادثة جديدة' && messages.length === 0) {
@@ -826,13 +1288,19 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
       });
       
       let processingPrompt = finalPayload;
-      if (agentType === 'مصنع التطبيقات' && currentCode) {
+      
+      if (effectiveAgentType === 'مصنع التطبيقات' && currentCode) {
         processingPrompt = `[رسالة تلقائية من النظام: هذا هو الكود الحالي. يجب عليك إضافة التعديلات التي يطلبها المستخدم عليه، وإرجاع الكود بالكامل دون حذف أي شيء قديم ودون اختصار:]\n\`\`\`html\n${currentCode}\n\`\`\`\n\nطلب المستخدم: ${finalPayload}`;
       }
+
+      if (isAutoFix) {
+        processingPrompt += `\n\n[إرشادات فنية مخفية للوكيل ماهر: هذا بلاغ عن خطأ برمجي. يرجى فحص الكود الحالي وإصلاح هذا الخطأ بدقة. يجب إرجاع الكود كاملاً بعد الإصلاح. في حال كان الخطأ معقداً ويستحيل إصلاحه برمجياً، قدم حلاً بديلاً أو وجه المستخدم برفق.]`;
+      }
       
-      const response = await processRequest(processingPrompt, agentType, history);
-      const isDiscussion = response.includes('[DISCUSSION_ONLY]');
-      const cleanResponse = response.replace(/\[DISCUSSION_ONLY\]/g, '');
+      const response = await processRequest(processingPrompt, effectiveAgentType, history, 0, abortController.signal);
+      
+      const hasReward = response.includes('[GRANT_REWARD_3]');
+      const cleanResponse = response.replace(/\[DISCUSSION_ONLY\]/g, '').replace(/\[GRANT_REWARD_3\]/g, '').trim();
 
       await safeAddDoc(collection(db, `chats/${chatId}/messages`), {
         role: 'model',
@@ -840,48 +1308,91 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         createdAt: serverTimestamp()
       });
 
-      if (userProfile && !isDiscussion && !isAutoFix && agentType !== 'ماهر العام') {
+      // Handle Reward (Once every 24 hours) - Only for Pro and Elite users
+      const userPlan = userProfile?.plan || 'free';
+      if (hasReward && userProfile && (userPlan === 'pro' || userPlan === 'elite')) {
+        const lastReward = userProfile.lastRewardAt?.toDate?.() || new Date(0);
+        const now = new Date();
+        const diffMs = now.getTime() - lastReward.getTime();
+        const diffHours = diffMs / (1000 * 60 * 60);
+
+        if (diffHours >= 24) {
+          const userRef = doc(db, 'users', user.uid);
+          await updateDoc(userRef, {
+            messageCount: increment(-3),
+            lastRewardAt: serverTimestamp()
+          });
+          
+          // Show reward notification
+          sendNotification("🎁 مكافأة من ماهر", {
+            body: "عشانك غالي علينا ومتميز في باقتك، زدنا رصيدك 3 أوامر إضافية! كمل إبداعك.",
+            icon: "/AppIcon~ios-marketing.png"
+          });
+          
+          // Log to admin for tracking
+          sendAdminNotification("Maher Reward Granted", `User ${user.email} was rewarded with 3 credits.`);
+        } else {
+          console.log("Reward skipped: 24h limit");
+          sendAdminNotification("Maher Reward Attempted", `User ${user.email} requested reward but is within 24h cooldown.`);
+        }
+      }
+
+      // Send notification if tab is hidden
+      sendNotification("اكتملت المهمة بنجاح!", {
+        body: effectiveAgentType === 'مصنع التطبيقات' ? "قام ماهر بتحديث الكود وواجهة المستخدم." : "رد ماهر على استفسارك.",
+      });
+
+      if (userProfile && !isAutoFix && effectiveAgentType !== 'ماهر العام') {
         const userRef = doc(db, 'users', user.uid);
         const dLimit = getDailyLimit();
         const dUsed = userProfile?.messageCount || 0;
 
+        const updates: any = {
+          totalMessages: increment(1),
+          monthlyTotalMessages: increment(1), // Total this month for cost estimation
+          updatedAt: serverTimestamp()
+        };
+
         if (dUsed < dLimit) {
-          await updateDoc(userRef, {
-            messageCount: increment(1),
-            totalMessages: increment(1),
-            updatedAt: serverTimestamp()
-          });
+          updates.messageCount = increment(1);
         } else {
-          await updateDoc(userRef, {
-            monthlyMessageCount: increment(1),
-            totalMessages: increment(1),
-            updatedAt: serverTimestamp()
-          });
+          updates.monthlyMessageCount = increment(1);
         }
+        
+        await updateDoc(userRef, updates);
       }
       
     } catch (error: any) {
+      if (error?.message === 'ABORTED') {
+        console.log('Request aborted by user');
+        return;
+      }
       console.error(error);
       const errMessage = error?.message || String(error);
       
       if (chatId) {
-        let errorMessage = 'عذراً، واجهت مشكلة أثناء محاولة الرد. يرجى المحاولة مرة أخرى.';
+        let errorMessage = 'عذراً، واجهت مشكلة تقنية بسيطة في الاتصال. يرجى المحاولة مرة أخرى.';
         
-        if (errMessage.includes('QUOTA_EXHAUSTED')) {
+        if (errMessage.includes('QUOTA_EXHAUSTED') || errMessage.includes('LIMIT_REACHED')) {
           errorMessage = '⚠️ يبدو أن "ماهر" مشغول جداً الآن (تجاوز حد الطلبات). يرجى الانتظار دقيقة واحدة فقط ثم المحاولة مرة أخرى. هذا أمر مؤقت وسيتم حله قريباً.';
           setCooldown(60); // 60 seconds cooldown
-        } else if (errMessage.includes('GENERAL_ERROR')) {
-          errorMessage = 'عذراً، حدث خطأ تقني غير متوقع أثناء التواصل مع "ماهر". يرجى إعادة المحاولة.';
+        } else if (errMessage.includes('PROCESS_FAILED')) {
+          errorMessage = 'عذراً، واجهت مشكلة تقنية بسيطة في الاتصال بسبب استغراق وقت طويل في التفكير. يرجى المحاولة مرة أخرى بنسخ نفس النص وإرساله.';
         }
 
-        await safeAddDoc(collection(db, `chats/${chatId}/messages`), {
-          role: 'model',
-          content: errorMessage,
-          createdAt: serverTimestamp()
-        });
+        try {
+          await safeAddDoc(collection(db, `chats/${chatId}/messages`), {
+            role: 'model',
+            content: errorMessage,
+            createdAt: serverTimestamp()
+          });
+        } catch (innerErr) {
+          console.error("Failed to save error message to chat:", innerErr);
+        }
       }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   }, [currentChatId, agentType, user, userProfile, messages, attachedImages, isLoading]);
 
@@ -922,6 +1433,13 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
     return versions;
   }, [messages]);
 
+  const handleUndo = useCallback((messageId: string) => {
+    const vIndex = codeVersions.findIndex(v => v.id === messageId);
+    if (vIndex >= 0) {
+      setHistoryIndex(vIndex);
+    }
+  }, [codeVersions]);
+
   const currentCode = codeVersions.length > 0
     ? (historyIndex === -1 ? codeVersions[codeVersions.length - 1].code : codeVersions[historyIndex]?.code || '')
     : '';
@@ -930,25 +1448,42 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data && event.data.type === 'ELEMENT_SELECTED') {
-        setSelectedSelector(event.data.selector);
-        setIsSelectionModeActive(false);
+        setSelectedSelectors(prev => {
+          if (prev.includes(event.data.selector)) {
+            return prev.filter(s => s !== event.data.selector);
+          }
+          return [...prev, event.data.selector];
+        });
+        // We do NOT set isSelectionModeActive to false if we want multi-select.
       } else if (event.data && event.data.type === 'CODE_ERROR') {
-        if (!currentCode || currentCode === lastAttemptedCodeRef.current || agentType !== "مصنع التطبيقات") return;
+        if (!currentCode || currentCode === lastAttemptedCodeRef.current || agentType !== "مصنع التطبيقات" || isSelectionModeActive) return;
         lastAttemptedCodeRef.current = currentCode;
         
-        const autoFixPrompt = `[رسالة نظام تلقائية للوكيل ماهر]:
+        const errorMsg = event.data.message || "";
+        let friendlyNote = "الإصلاح ما يخصم من رصيدك، أبشر بسعدك خلها علي وأنا بتصرف يا الزميل";
+        
+        if (errorMsg.includes("ReferenceError")) {
+          friendlyNote = "أفا.. شكل الهواجيس خذتني ونسيت أعرف واحد من المتغيرات، أبشر الحين أربطه لك ولا يشغلك بال يا الزميل.";
+        } else if (errorMsg.includes("SyntaxError")) {
+          friendlyNote = "الظاهر فيه غلظة بسيطة في رص الحكي (الكود)، مير لا تشيل هم، الحين أرتب الأوراق من جديد وأضبطه لك.";
+        } else if (errorMsg.includes("TypeError")) {
+          friendlyNote = "صار فيه تداخل بسيط في الأشكال والأنواع، الحين أسنعها لك وأخلي التطبيق يمشي زي الحلاوة.";
+        } else if (errorMsg.includes("RangeError") || errorMsg.includes("InternalError")) {
+          friendlyNote = "يبدو إن الكود طمر فوق حده، أبشر به الحين أحسنه لك وأخليه يركد ويستقر يا الزميل.";
+        }
+
+        const autoFixPrompt = `[رسالة نظام تلقائية من ماهر]:
 ظهر الخطأ البرمجي التالي للمستخدم عند تشغيل ومعاينة الكود الحالي:
 "${event.data.message}" ${event.data.line ? `في السطر ${event.data.line}` : ''}
 
-الرجاء فحص الكود الحالي وإصلاح هذا الخطأ بدقة. يجب إرجاع الكود كاملاً بعد الإصلاح. 
-في حال كان الخطأ معقداً ويستحيل إصلاحه برمجياً ضمن السياق الحالي، يرجى كتابة رسالة تعتذر فيها وتوجيه المستخدم لتنزيل ملفات المشروع والبدء في مشروع جديد لاستكمال العمل، وذلك لضمان استقرار التطبيق.`;
+" ${friendlyNote} "`;
         
         handleSendMessage(autoFixPrompt, true);
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [currentCode, agentType, handleSendMessage]);
+  }, [currentCode, agentType, handleSendMessage, isSelectionModeActive]);
 
   const injectedPreviewCode = useMemo(() => {
     if (!currentCode) return '';
@@ -971,6 +1506,64 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
             errorCount++;
             window.parent.postMessage({ type: 'CODE_ERROR', message: e.reason ? e.reason.toString() : 'Unhandled Promise Rejection' }, '*');
           });
+
+          // Intercept links, forms and window.location to prevent parent navigation
+          (function() {
+            const prevent = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            };
+
+            // Block location shifts
+            try {
+              window.onbeforeunload = function() { return null; };
+              window.onunload = function() { return null; };
+              
+              // Prevent common history API navigation
+              const noop = () => {};
+              history.pushState = noop;
+              history.replaceState = noop;
+              // history.back, etc might be used for UI stuff, but we block top-level
+            } catch(e) {}
+
+            window.addEventListener('click', function(e) {
+              if (e.defaultPrevented) return;
+              let target = e.target;
+              while(target && target.tagName !== 'A') {
+                target = target.parentNode;
+              }
+              if(target && target.tagName === 'A') {
+                const href = target.getAttribute('href');
+                const targetAttr = target.getAttribute('target');
+                
+                // Allow external links in new tabs if they are absolute
+                if (href && href.startsWith('http') && targetAttr === '_blank') {
+                  return;
+                }
+
+                // Prevent all other navigations
+                prevent(e);
+                console.log("Prevented navigation in preview:", href);
+              }
+            }, true);
+
+            window.addEventListener('submit', function(e) {
+              prevent(e);
+              console.log("Prevented form submission in preview");
+            }, true);
+
+            // Try to block window.top navigation
+            try {
+              const originalOpen = window.open;
+              window.open = function() {
+                console.log("Blocked window.open in preview");
+                return null;
+              };
+              
+              // We can't easily block window.location assignment directly,
+              // but sandbox "allow-top-navigation" (missing) handled most cases.
+            } catch(e) {}
+          })();
         })();
       </script>
     `;
@@ -981,21 +1574,67 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
        modifiedCode = errorCatchingScript + modifiedCode;
     }
 
-    if (!isSelectionModeActive) return modifiedCode;
-
+    // ALWAYS INCLUDE SELECTION SCRIPT
     const selectionScript = `
       <script>
         (function() {
           let lastEl = null;
-          const overlay = document.createElement('div');
-          overlay.style.position = 'fixed';
-          overlay.style.pointerEvents = 'none';
-          overlay.style.border = '2px solid #c5a059';
-          overlay.style.backgroundColor = 'rgba(197, 160, 89, 0.1)';
-          overlay.style.zIndex = '999999';
-          overlay.style.display = 'none';
-          overlay.style.transition = 'all 0.1s ease';
-          document.body.appendChild(overlay);
+          let isSelectionActive = false;
+          let hoverOverlay = null;
+          let selectedSelectors = [];
+          let selectedOverlays = [];
+
+          window.addEventListener('message', (e) => {
+            if (e.data.type === 'TOGGLE_SELECTION_MODE') {
+              isSelectionActive = e.data.enabled;
+              if (hoverOverlay) hoverOverlay.style.display = 'none';
+            } else if (e.data.type === 'UPDATE_SELECTED_ELEMENTS') {
+              selectedSelectors = e.data.selectors || [];
+              updateSelectedOverlays();
+            }
+          });
+
+          function ensureHoverOverlay() {
+            if (hoverOverlay) return;
+            hoverOverlay = document.createElement('div');
+            hoverOverlay.style.position = 'fixed';
+            hoverOverlay.style.pointerEvents = 'none';
+            hoverOverlay.style.border = '2px solid #c5a059';
+            hoverOverlay.style.backgroundColor = 'rgba(197, 160, 89, 0.1)';
+            hoverOverlay.style.zIndex = '999999';
+            hoverOverlay.style.display = 'none';
+            hoverOverlay.style.transition = 'all 0.1s ease';
+            document.body.appendChild(hoverOverlay);
+          }
+
+          function updateSelectedOverlays() {
+            selectedOverlays.forEach(o => o.remove());
+            selectedOverlays = [];
+            selectedSelectors.forEach(sel => {
+              try {
+                const el = document.querySelector(sel);
+                if (el) {
+                  const overlay = document.createElement('div');
+                  overlay.style.position = 'fixed';
+                  overlay.style.pointerEvents = 'none';
+                  overlay.style.border = '2px solid #10b981';
+                  overlay.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
+                  overlay.style.zIndex = '999998';
+                  
+                  const rect = el.getBoundingClientRect();
+                  overlay.style.width = Math.ceil(rect.width) + 'px';
+                  overlay.style.height = Math.ceil(rect.height) + 'px';
+                  overlay.style.top = Math.ceil(rect.top) + 'px';
+                  overlay.style.left = Math.ceil(rect.left) + 'px';
+                  document.body.appendChild(overlay);
+                  selectedOverlays.push(overlay);
+                }
+              } catch(e) {}
+            });
+          }
+
+          window.addEventListener('scroll', updateSelectedOverlays, true);
+          window.addEventListener('resize', updateSelectedOverlays);
 
           function getSelector(el) {
             if (el.id) return '#' + el.id;
@@ -1020,18 +1659,24 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
           }
 
           document.addEventListener('mouseover', (e) => {
+            if (!isSelectionActive) return;
+            ensureHoverOverlay();
             const el = e.target;
-            if (el === document.body || el === document.documentElement) return;
+            if (el === document.body || el === document.documentElement) {
+              if (hoverOverlay) hoverOverlay.style.display = 'none';
+              return;
+            }
             lastEl = el;
             const rect = el.getBoundingClientRect();
-            overlay.style.width = Math.ceil(rect.width) + 'px';
-            overlay.style.height = Math.ceil(rect.height) + 'px';
-            overlay.style.top = Math.ceil(rect.top) + 'px';
-            overlay.style.left = Math.ceil(rect.left) + 'px';
-            overlay.style.display = 'block';
+            hoverOverlay.style.width = Math.ceil(rect.width) + 'px';
+            hoverOverlay.style.height = Math.ceil(rect.height) + 'px';
+            hoverOverlay.style.top = Math.ceil(rect.top) + 'px';
+            hoverOverlay.style.left = Math.ceil(rect.left) + 'px';
+            hoverOverlay.style.display = 'block';
           });
 
           document.addEventListener('click', (e) => {
+            if (!isSelectionActive) return;
             e.preventDefault();
             e.stopPropagation();
             const selector = getSelector(e.target);
@@ -1039,18 +1684,37 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
           }, true);
 
           document.addEventListener('mouseleave', () => {
-             overlay.style.display = 'none';
+             if (hoverOverlay) hoverOverlay.style.display = 'none';
           });
         })();
       </script>
     `;
-    
-    // Inject at end of body
-    if (currentCode.includes('</body>')) {
-      return currentCode.replace('</body>', selectionScript + '</body>');
+
+    if (modifiedCode.includes('</body>')) {
+      return modifiedCode.replace('</body>', selectionScript + '</body>');
     }
-    return currentCode + selectionScript;
-  }, [currentCode, isSelectionModeActive]);
+    return modifiedCode + selectionScript;
+  }, [currentCode]);
+
+  // Sync selection state with iframe
+  useEffect(() => {
+    const iframe = document.querySelector('iframe[title="preview"]') as HTMLIFrameElement;
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.postMessage({ 
+        type: 'UPDATE_SELECTED_ELEMENTS', 
+        selectors: selectedSelectors 
+      }, '*');
+    }
+  }, [selectedSelectors, currentCode]);
+  useEffect(() => {
+    const iframe = document.querySelector('iframe[title="preview"]') as HTMLIFrameElement;
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.postMessage({ 
+        type: 'TOGGLE_SELECTION_MODE', 
+        enabled: isSelectionModeActive 
+      }, '*');
+    }
+  }, [isSelectionModeActive, previewRefreshKey, currentCode, historyIndex]);
 
   const handleCloudBack = () => {
     if (cloudStatus !== 'idle') {
@@ -1134,7 +1798,47 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
 
   const confirmNewProject = async () => {
     if (!projectTitle.trim() || isCreatingProject) return;
+    
     const titleToSave = projectTitle.trim();
+    const normalizedTitle = titleToSave.toLowerCase();
+    const normalizedType = projectType.toLowerCase();
+
+    // Strict prohibition of games as requested
+    const gameKeywords = ['لعبة', 'لعبه', 'game', 'games', 'gaming'];
+    const isGame = gameKeywords.some(keyword => 
+      normalizedTitle.includes(keyword) || normalizedType.includes(keyword)
+    );
+
+    if (isGame) {
+      alert('عذراً، يمنع منعاً باتاً إنشاء الألعاب في هذا النظام للحفاظ على استقرار الخدمة.');
+      setShowNamingModal(false);
+      setProjectTitle('');
+      return;
+    }
+
+    // Comprehensive cleanup of any existing "game" projects for this user
+    try {
+      const qOldGames = query(
+        collection(db, 'chats'), 
+        where('userId', '==', user.uid)
+      );
+      const oldGamesSnap = await getDocs(qOldGames);
+      for (const gameDoc of oldGamesSnap.docs) {
+        const data = gameDoc.data();
+        const t = (data.title || '').toLowerCase();
+        const p = (data.projectType || '').toLowerCase();
+        if (t.includes('لعبة') || t.includes('لعبه') || t.includes('game') || p.includes('لعبة') || p === 'game') {
+          // Deep delete messages
+          const msgsSnap = await getDocs(collection(db, `chats/${gameDoc.id}/messages`));
+          const msgPromises = msgsSnap.docs.map(m => deleteDoc(m.ref));
+          await Promise.all(msgPromises);
+          // Delete chat
+          await deleteDoc(gameDoc.ref);
+        }
+      }
+    } catch (err) {
+      console.error("Auto-cleanup games failed:", err);
+    }
     
     // Close modal immediately and show full-page loading state
     setShowNamingModal(false);
@@ -1146,6 +1850,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         userId: user.uid,
         title: titleToSave,
         agentName: agentType,
+        projectType: projectType,
         updatedAt: serverTimestamp()
       });
       setCurrentChatId(newChatRef.id);
@@ -1187,12 +1892,11 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
   }, []);
 
   return (
-    <div className="flex h-screen mesh-bg text-zinc-100 overflow-hidden rtl relative selection:bg-gold-500/30 selection:text-gold-200">
-      <CodeBackground />
-      {/* Optimized Background Layer */}
+    <div className="flex h-[100dvh] w-full max-w-full mesh-bg text-zinc-100 overflow-hidden rtl relative selection:bg-gold-500/30 selection:text-gold-200">
+      {/* Optimized Background Layer - Cleaned up movement */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none select-none z-0">
-        <div className="absolute top-[-15%] right-[-10%] w-[60%] h-[60%] bg-gold-500/10 blur-[140px] rounded-full animate-pulse" />
-        <div className="absolute bottom-[-10%] left-[-5%] w-[40%] h-[40%] bg-gold-500/5 blur-[120px] rounded-full" style={{ animationDelay: '3s' }} />
+        <div className="absolute top-[-15%] right-[-10%] w-[60%] h-[60%] bg-gold-500/5 blur-[140px] rounded-full" />
+        <div className="absolute bottom-[-10%] left-[-5%] w-[40%] h-[40%] bg-gold-500/5 blur-[120px] rounded-full" />
       </div>
 
       <AnimatePresence>
@@ -1286,8 +1990,9 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                   {getBalance()} رصيد
                 </span>
               </p>
-              <div className="text-sm text-zinc-500 font-medium truncate flex items-center gap-1 mt-0.5">
-                {userPlan === 'free' ? 'باقة مجانية' : userPlan === 'pro' ? 'الباقة الاحترافية' : 'باقة النخبة'}
+              <div className="text-sm text-zinc-500 font-medium truncate flex flex-col gap-0.5 mt-0.5">
+                <span>{userPlan === 'free' ? 'باقة مجانية' : userPlan === 'pro' ? 'الباقة الاحترافية' : 'باقة النخبة'}</span>
+                {userProfile?.phone && <span className="text-[10px] opacity-60" dir="ltr">{userProfile.phone}</span>}
               </div>
             </div>
           </div>
@@ -1300,15 +2005,24 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
               <span>الترقية للباقة المدفوعة</span>
             </button>
           )}
-          {user.email === 'mr.imaher@gmail.com' && (
-            <button 
-              onClick={() => setShowAdminDashboard(true)}
-              className="w-full flex items-center gap-2 text-zinc-400 hover:text-white px-2 py-2 mb-1 rounded-lg hover:bg-zinc-800/50 transition-colors"
-            >
-              <Settings className="w-5 h-5" />
-              <span className="text-sm font-medium">لوحة تحكم المسؤول</span>
-            </button>
+          {['mr.imaher@gmail.com', 'hoomiapp@gmail.com', 'md2maher@gmail.com'].includes(user.email || '') && (
+            <div className="space-y-1 mb-1">
+              <button 
+                onClick={() => setShowAdminDashboard(true)}
+                className="w-full flex items-center gap-2 text-zinc-400 hover:text-white px-2 py-2 rounded-lg hover:bg-zinc-800/50 transition-colors"
+              >
+                <Settings className="w-5 h-5" />
+                <span className="text-sm font-medium">لوحة تحكم المسؤول</span>
+              </button>
+            </div>
           )}
+          <button 
+            onClick={() => setShowDocumentation(true)}
+            className="w-full flex items-center gap-2 text-zinc-400 hover:text-gold-400 px-2 py-2 rounded-lg hover:bg-zinc-800/50 transition-colors mb-1"
+          >
+            <BookOpen className="w-5 h-5" />
+            <span className="text-sm font-medium">دليل الاستخدام</span>
+          </button>
           <button 
             onClick={() => auth.signOut()}
             className="w-full flex items-center gap-2 text-zinc-400 hover:text-red-400 px-2 py-2 rounded-lg hover:bg-zinc-800/50 transition-colors"
@@ -1339,59 +2053,57 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
           </div>
         )}
         
-        <div className="flex-1 flex flex-col sm:flex-row min-w-0 h-full overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row min-w-0 h-full overflow-hidden">
           {/* IDE Center (Chat & Commands) */}
-          <div className={clsx(
-            "flex flex-col border-l border-zinc-800/50 shrink-0 bg-zinc-950/50 h-full transition-all duration-300",
-            (agentType === "ماهر العام" || !isMobilePreviewOpen) ? "w-full" : "w-full sm:w-[300px] md:w-[360px] lg:w-[420px]",
-            isMobilePreviewOpen && agentType === "مصنع التطبيقات" ? "hidden sm:flex" : "flex"
-          )}>
-           <header className="shrink-0 flex items-center justify-between px-4 h-16 border-b border-zinc-800/50 bg-zinc-900/30">
-            <div className="flex items-center gap-3">
-              <button className="lg:hidden text-zinc-400 hover:text-white" onClick={() => setIsSidebarOpen(true)}>
-                <Menu className="w-6 h-6" />
+          <div 
+            className={clsx(
+              "flex flex-col border-l border-zinc-800/50 shrink-0 bg-zinc-950/50 h-full transition-all duration-300 relative",
+              (agentType === "ماهر العام" || !isMobilePreviewOpen) ? "w-full" : "w-full lg:w-[420px]",
+              isMobilePreviewOpen && agentType === "مصنع التطبيقات" ? "hidden lg:flex" : "flex"
+            )}
+          >
+            <header className="shrink-0 flex items-center justify-between px-2 sm:px-4 h-16 border-b border-zinc-800/50 bg-zinc-900/30 overflow-x-auto hide-scrollbar gap-1 sm:gap-3">
+            <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+              <button className="lg:hidden text-zinc-400 hover:text-white p-1 sm:p-2 rounded-xl hover:bg-zinc-800/50 transition-colors" onClick={() => setIsSidebarOpen(true)}>
+                <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
-              <div className="flex items-center bg-zinc-950/50 rounded-lg p-1 border border-zinc-800/50">
+              <div className="flex items-center bg-zinc-950/80 rounded-xl p-1 border border-zinc-800/50 shadow-inner w-[190px] sm:w-[280px]">
                 {(["ماهر العام", "مصنع التطبيقات"] as const).map((type) => (
                   <button
                     key={type}
                     onClick={() => setAgentType(type)}
                     className={clsx(
-                      "px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5",
+                      "flex-1 flex items-center justify-center gap-1 sm:gap-2 px-1 sm:px-4 py-1.5 sm:py-2 text-[9px] sm:text-xs font-bold rounded-lg transition-all duration-300 relative whitespace-nowrap",
                       agentType === type 
-                        ? "bg-gold-500 text-zinc-950 shadow-sm" 
-                        : "text-zinc-400 hover:text-zinc-200"
+                        ? "bg-gold-500 text-zinc-950 shadow-[0_0_15px_rgba(234,179,8,0.2)]" 
+                        : "text-zinc-400 hover:text-white hover:bg-white/5"
                     )}
                   >
-                    {type === "مصنع التطبيقات" ? <Code className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {type === "مصنع التطبيقات" ? <Code className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
                     <span>{type}</span>
                   </button>
                 ))}
               </div>
             </div>
-            {agentType === "مصنع التطبيقات" && (
-              <button 
-                className="text-zinc-300 hover:text-gold-500 flex items-center gap-2 bg-zinc-900 px-4 py-2 rounded-xl border border-zinc-800/50 transition-colors shadow-lg shadow-gold-500/5" 
-                onClick={() => {
-                  setIsMobilePreviewOpen(!isMobilePreviewOpen);
-                  setIsSidebarOpen(false);
-                }}
-              >
-                {isMobilePreviewOpen ? (
-                  <>
-                    <MessageSquare className="w-4 h-4 text-gold-500 sm:hidden" />
-                    <X className="w-4 h-4 text-gold-500 hidden sm:block" />
-                    <span className="text-sm font-bold sm:hidden">الدردشة</span>
-                    <span className="text-sm font-bold hidden sm:inline">إغلاق المعاينة</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 text-gold-500" />
-                    <span className="text-sm font-bold">معاينة</span>
-                  </>
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <AnimatePresence mode="wait">
+                {agentType === "مصنع التطبيقات" && !isMobilePreviewOpen && (
+                  <motion.button 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border bg-gold-500 text-zinc-950 border-gold-400 hover:bg-gold-400 transition-all shadow-md active:scale-95 group whitespace-nowrap"
+                    onClick={() => {
+                      setIsMobilePreviewOpen(true);
+                      setIsSidebarOpen(false);
+                    }}
+                  >
+                    <Play className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] sm:text-xs font-bold whitespace-nowrap">عرض المعاينة</span>
+                  </motion.button>
                 )}
-              </button>
-            )}
+              </AnimatePresence>
+            </div>
           </header>
 
           <div 
@@ -1407,13 +2119,94 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                   </div>
                 </div>
               )}
-              {!messages.length && (
-                <div className="flex flex-col items-center justify-center py-10 text-center opacity-70">
-                  <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center overflow-hidden mb-4 border border-zinc-800/50">
-                    <img src="/AppIcon~ios-marketing.png" alt="Maher" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              {!messages.length && !isLoading && (
+                <div className="flex flex-col w-full items-end animate-in fade-in slide-in-from-bottom-4 duration-700 ease-out rtl">
+                  <div className="flex gap-3 sm:gap-4 max-w-[95%] sm:max-w-[85%] lg:max-w-[75%] flex-row-reverse">
+                    <div className="w-8 sm:w-10 h-8 sm:h-10 rounded-xl sm:rounded-2xl bg-gradient-to-br from-gold-500 to-orange-600 p-0.5 shrink-0 flex items-center justify-center shadow-lg">
+                      <div className="w-full h-full bg-zinc-950 rounded-[10px] sm:rounded-[14px] overflow-hidden flex items-center justify-center">
+                        <img src="/AppIcon~ios-marketing.png" alt="Maher" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0 flex flex-col gap-2 items-end mt-1 sm:mt-2">
+                       <span className="text-xs sm:text-sm font-bold text-gold-500 flex items-center gap-1.5 px-1 flex-row-reverse">
+                          <Sparkles className="w-3 sm:w-4 h-3 sm:h-4" />
+                          {agentType === 'مصنع التطبيقات' ? "ماهر (مصنع التطبيقات)" : "ماهر العام"}
+                       </span>
+                       <div className="p-5 sm:p-6 rounded-2xl rounded-tr-sm bg-zinc-900 border border-zinc-800/50 shadow-xl w-full text-right relative overflow-hidden">
+                          {/* Decorative blur */}
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-gold-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+                          
+                          <div className="prose prose-sm sm:prose-base prose-invert prose-p:leading-relaxed text-zinc-300 relative z-10 w-full">
+                             <h3 className="text-xl sm:text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-l from-gold-400 to-gold-600 mb-4 inline-block">
+                                أهلاً بك يا فخم! ✨
+                             </h3>
+                             {agentType === "مصنع التطبيقات" ? (
+                               <>
+                                 <p className="text-base sm:text-lg text-white mb-4 leading-relaxed font-medium">أنا ماهر، مهندسك الخاص وشريكك الذكي لبناء تحفتك التقنية القادمة.</p>
+                                 <p className="text-zinc-400 text-sm sm:text-base leading-relaxed">
+                                   سواءً كنت تحلم بمتجر إلكتروني يكسر حاجز المبيعات، مبادرة لخدمة مجتمعك، تطبيق ذكي يعتمد على الخرائط، أو حتى بناء واجهة لنظام إداري معقّد...<br/>
+                                   <strong className="text-zinc-200">أنا هنا لأحول خيالك إلى سطور برمجية تتنفس أمام عينيك في ثوانٍ.</strong>
+                                 </p>
+                                 <div className="mt-6 p-4 bg-gold-500/10 border border-gold-500/20 rounded-xl relative overflow-hidden group">
+                                   <div className="absolute inset-0 bg-gradient-to-r from-gold-500/0 via-gold-500/10 to-gold-500/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+                                   <p className="text-gold-400 font-bold text-base sm:text-lg m-0 relative z-10">ما هو التطبيق العظيم الذي سنبنيه معاً اليوم؟ 🚀</p>
+                                 </div>
+                               </>
+                             ) : (
+                               <>
+                                 <p className="text-base sm:text-lg text-white mb-4 leading-relaxed font-medium">أنا ماهر، المساعد الاستثنائي لمناقشة أفكارك، كتابة أبحاثك، وحل أعتى المشكلات بعبقرية مطلقة.</p>
+                                 <p className="text-zinc-400 text-sm sm:text-base leading-relaxed">
+                                   في هذا الوضع، نبتعد عن كتابة الأكواد لندخل في عمق الإبداع والمناقشة.<br/>
+                                   سواء كنت تريد صياغة خطة تسويقية محكمة، كتابة سيناريو عبقري، أو حتى تحتاج إلى تفكير عميق لحل مشكلة معقدة...<br/>
+                                   <strong className="text-zinc-200">أنا أقف إلى جانبك لنصل إلى الإجابة النموذجية معاً.</strong>
+                                 </p>
+                                 <div className="mt-6 p-4 bg-gold-500/10 border border-gold-500/20 rounded-xl relative overflow-hidden group">
+                                   <div className="absolute inset-0 bg-gradient-to-r from-gold-500/0 via-gold-500/10 to-gold-500/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+                                   <p className="text-gold-400 font-bold text-base sm:text-lg m-0 relative z-10">كيف أستطيع أن أبهرك اليوم؟ 🧠</p>
+                                 </div>
+                               </>
+                             )}
+                          </div>
+                          
+                          {agentType === "مصنع التطبيقات" && (
+                            <div className="mt-8 flex flex-wrap gap-2 justify-end relative z-10">
+                                {[
+                                  "تطبيق توصيل طلبات 🛵",
+                                  "متجر إلكتروني احترافي 🛒",
+                                  "نظام إدارة مطاعم 🍕",
+                                  "تطبيق حجوزات ومواعيد 📅"
+                                ].map(suggestion => (
+                                  <button 
+                                    key={suggestion} 
+                                    onClick={() => handleSendMessage(suggestion)} 
+                                    className="text-xs sm:text-sm px-4 py-2.5 rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 hover:text-white hover:border-gold-500/50 hover:bg-gold-500/10 transition-all font-medium shadow-sm hover:shadow-md hover:-translate-y-0.5"
+                                  >
+                                    {suggestion}
+                                  </button>
+                                ))}
+                            </div>
+                          )}
+                          {agentType === "ماهر العام" && (
+                            <div className="mt-8 flex flex-wrap gap-2 justify-end relative z-10">
+                                {[
+                                  "اكتب لي خطة تسويقية 📊",
+                                  "كيف أبدأ مشروعي التقني؟ 💡",
+                                  "لخّص لي كتاباً شهيراً 📚",
+                                  "ساعدني في تنظيم وقتي ⏱️"
+                                ].map(suggestion => (
+                                  <button 
+                                    key={suggestion} 
+                                    onClick={() => handleSendMessage(suggestion)} 
+                                    className="text-xs sm:text-sm px-4 py-2.5 rounded-full border border-zinc-800 bg-zinc-950 text-zinc-300 hover:text-white hover:border-gold-500/50 hover:bg-gold-500/10 transition-all font-medium shadow-sm hover:shadow-md hover:-translate-y-0.5"
+                                  >
+                                    {suggestion}
+                                  </button>
+                                ))}
+                            </div>
+                          )}
+                       </div>
+                    </div>
                   </div>
-                  <h3 className="text-xl font-bold mb-2">مرحباً بك!</h3>
-                  <p className="text-zinc-400 text-sm">أنا ماهر، ما الذي تود القيام به اليوم؟</p>
                 </div>
               )}
               
@@ -1427,19 +2220,30 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                   agentType={agentType}
                   handleSendMessage={handleSendMessage}
                   isLoading={isLoading}
+                  onUndo={handleUndo}
+                  canUndo={
+                    message.role === 'model' &&
+                    codeVersions.findIndex(v => v.id === message.id) >= 0
+                  }
                 />
               ))}
               
-              {isLoading && (
-                <div className="flex w-full justify-start">
-                  <div className="bg-transparent px-4 py-2 flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-gold-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-1.5 h-1.5 rounded-full bg-gold-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-1.5 h-1.5 rounded-full bg-gold-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                </div>
-              )}
+              {isLoading && <LoadingIndicator agentType={agentType} />}
               <div ref={messagesEndRef} className="h-4" />
+              
+              <AnimatePresence>
+                {showScrollButton && (
+                  <motion.button
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                    className="absolute bottom-[110px] left-1/2 -translate-x-1/2 z-30 p-3 bg-gold-500 text-zinc-950 rounded-full shadow-2xl hover:bg-gold-400 transition-all active:scale-90"
+                  >
+                    <ArrowDown className="w-5 h-5" />
+                  </motion.button>
+                )}
+              </AnimatePresence>
               
               {isExceeded && agentType !== 'ماهر العام' && (
                 <motion.div 
@@ -1470,77 +2274,92 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
             isExceeded={isExceeded}
             cooldown={cooldown}
             onSendMessage={handleSendMessage}
+            onStop={handleStopRequest}
             agentType={agentType}
             attachedImages={attachedImages}
             setAttachedImages={setAttachedImages}
             handleFileSelect={handleFileSelect}
             isSelectionModeActive={isSelectionModeActive}
             setIsSelectionModeActive={setIsSelectionModeActive}
-            selectedSelector={selectedSelector}
-            setSelectedSelector={setSelectedSelector}
+            selectedSelectors={selectedSelectors}
+            setSelectedSelectors={setSelectedSelectors}
             activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            setActiveTab={handleTabSwitch}
             handleDrop={handleDrop}
             handleDragOver={handleDragOver}
             setShowUpgradeModal={setShowUpgradeModal}
             currentChatId={currentChatId}
+            setIsMobilePreviewOpen={setIsMobilePreviewOpen}
           />
         </div>
 
         {/* IDE Right/Left Workspace Area (Preview) */}
         {agentType === "مصنع التطبيقات" && (
           <div className={clsx(
-            "flex-1 flex-col bg-[#0A0A0A] relative h-full transition-all duration-300",
-            isMobilePreviewOpen ? "flex" : "hidden"
+            "flex-1 flex-col bg-[#0A0A0A] relative h-full transition-all duration-300 min-w-0 w-full",
+            isMobilePreviewOpen ? "flex" : "hidden lg:flex"
           )}>
-            <header className="h-16 border-b border-zinc-800/50 flex items-center justify-between px-2 sm:px-4 shrink-0 bg-zinc-950/50 overflow-x-auto hide-scrollbar gap-4">
-              <div className="flex items-center gap-2 shrink-0">
-                <button 
-                  className="sm:hidden text-zinc-300 hover:text-white p-2 rounded-lg hover:bg-zinc-800 transition-colors shrink-0" 
-                  onClick={() => setIsMobilePreviewOpen(false)}
-                  title="العودة للدردشة"
-                >
-                  <ArrowRight className="w-5 h-5 ml-1" />
-                </button>
-                <div className="flex items-center gap-1 bg-zinc-900/50 rounded-lg p-1 border border-zinc-800/50 shrink-0">
+            <header className="h-16 border-b border-zinc-800/50 flex flex-nowrap items-center justify-between px-2 sm:px-4 shrink-0 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50 overflow-x-auto hide-scrollbar gap-2 sm:gap-4">
+              <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+                <div className="flex items-center bg-zinc-900/50 rounded-xl p-1 border border-zinc-800/50 shrink-0">
+                  <button 
+                    onClick={() => setIsMobilePreviewOpen(false)}
+                    className="px-2 sm:px-3 py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all text-zinc-400 hover:text-white hover:bg-red-500/10 flex items-center gap-1 sm:gap-1.5 whitespace-nowrap group"
+                    title="العودة للدردشة"
+                  >
+                    <X className="w-4 h-4 group-hover:rotate-90 transition-transform" />
+                    <span className="hidden sm:inline">إغلاق المعاينة</span>
+                    <span className="sm:hidden">إغلاق</span>
+                  </button>
+                  <div className="w-[1px] h-4 bg-zinc-800 mx-1" />
                   <button 
                     onClick={() => handleTabSwitch('preview')}
-                    className={clsx("px-3 sm:px-4 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap", activeTab === 'preview' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200")}
+                    className={clsx("px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all whitespace-nowrap", activeTab === 'preview' ? "bg-gold-500 text-zinc-950 shadow-lg" : "text-zinc-400 hover:text-zinc-200")}
                   >
                     المعاينة
                   </button>
                    <button 
                     onClick={() => handleTabSwitch('cloud')}
-                    className={clsx("px-3 sm:px-4 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap", activeTab === 'cloud' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200")}
+                    className={clsx("px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 whitespace-nowrap", activeTab === 'cloud' ? "bg-gold-500 text-zinc-950 shadow-lg" : "text-zinc-400 hover:text-zinc-200")}
                   >
-                    {userPlan !== 'elite' && <Lock className="w-3.5 h-3.5 text-gold-500" />}
-                    <span className="hidden sm:inline">السحابة (Cloud)</span>
-                    <span className="sm:hidden">السحابة</span>
+                    {userPlan !== 'elite' && <Lock className="w-3 h-3" />}
+                    <span className="hidden lg:inline">السحابة (Cloud)</span>
+                    <span className="lg:hidden">السحابة</span>
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-4 shrink-0">
                 {activeTab === 'preview' && (
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                     <button 
                       onClick={() => setPreviewRefreshKey(prev => prev + 1)} 
-                      className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors border border-transparent hover:border-zinc-700 shrink-0"
+                      className="p-1 sm:p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors border border-transparent hover:border-zinc-700 shrink-0"
                       title="تحديث الصفحة"
                     >
-                      <RefreshCw className="w-5 h-5" />
+                      <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
-                    <div className="flex items-center gap-1 bg-zinc-900/50 rounded-lg p-1 border border-zinc-800/50 ltr shrink-0">
-                      <button onClick={() => setDeviceSize('mobile')} className={clsx("p-1.5 rounded-md transition-colors", deviceSize === 'mobile' ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300")}>
-                        <Smartphone className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => setDeviceSize('tablet')} className={clsx("p-1.5 rounded-md transition-colors", deviceSize === 'tablet' ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300")}>
-                        <Tablet className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => setDeviceSize('desktop')} className={clsx("p-1.5 rounded-md transition-colors", deviceSize === 'desktop' ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300")}>
-                        <Monitor className="w-4 h-4" />
-                      </button>
-                    </div>
+                    <button 
+                      onClick={() => {
+                        const sizes: DeviceSize[] = ['mobile', 'tablet', 'desktop'];
+                        const nextIndex = (sizes.indexOf(deviceSize) + 1) % sizes.length;
+                        setDeviceSize(sizes[nextIndex]);
+                      }}
+                      className="flex items-center gap-1 sm:gap-2.5 px-2 sm:px-4 py-1.5 sm:py-2 bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800/80 rounded-xl text-zinc-200 hover:text-white transition-all group shadow-lg"
+                      title="تغيير حجم العرض"
+                    >
+                      <div className="text-gold-500 group-hover:scale-110 transition-transform">
+                        {deviceSize === 'mobile' ? <Smartphone className="w-3 h-3 sm:w-4 sm:h-4" /> : 
+                         deviceSize === 'tablet' ? <Tablet className="w-3 h-3 sm:w-4 sm:h-4" /> : 
+                         <Monitor className="w-3 h-3 sm:w-4 sm:h-4" />}
+                      </div>
+                      <span className="text-[10px] sm:text-xs font-bold whitespace-nowrap hidden sm:inline">
+                        {deviceSize === 'mobile' ? 'معاينة الجوال' : 
+                         deviceSize === 'tablet' ? 'معاينة التابلت' : 
+                         'معاينة الكمبيوتر'}
+                      </span>
+                      <RotateCcw className="w-3 h-3 text-zinc-600 group-hover:text-gold-500 transition-colors" />
+                    </button>
                   </div>
                 )}
 
@@ -1686,19 +2505,19 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                     <div className="space-y-3">
                       <h3 className="text-2xl font-bold text-white">
                         {cloudStatus === 'connected' 
-                          ? (connectedService === 'firebase' ? 'تم ربط Maher App Maker بـ Firebase!' : 'تم النشر على Google Cloud (Maher Core) بنجاح!') 
-                          : cloudStatus.includes('provisioning') ? 'جاري تهيئة بيئة Maher App Maker...' : 'ربط المشروع بالسحابة'}
+                          ? (connectedService === 'firebase' ? 'تم ربط Maher App Maker بنظام Maher Sync السحابي!' : 'تم النشر على سيرفرات Maher Global (المشفرة) بنجاح!') 
+                          : cloudStatus.includes('provisioning') ? 'جاري تهيئة بيئة Maher App Maker...' : 'ربط المشروع بالسحابة الآمنة'}
                       </h3>
                       <p className="text-zinc-400 text-sm leading-relaxed">
                         {cloudStatus === 'connected' 
                           ? (connectedService === 'firebase' 
-                              ? 'مشروع "Maher App Maker" مرتبط الآن ببيئة Firebase السحابية في الولايات المتحدة لضمان أسرع أداء.' 
-                              : 'تم نشر مشروعك على خوادم "Maher Core" في Google Cloud بنجاح. الربط مع Firebase مفعل بالكامل.') 
+                              ? 'مشروع "Maher App Maker" مرتبط الآن بنظام Maher Sync السحابي لضمان أسرع أداء وحفظ البيانات.' 
+                              : 'تم نشر مشروعك على خوادم "Maher Global" العالمية بنجاح. الربط مع قاعدة البيانات مفعل بالكامل.') 
                           : cloudStatus === 'provisioning-firebase' 
-                          ? `جاري إنشاء قاعدة بيانات لـ Maher App Maker...`
+                          ? `جاري إنشاء قاعدة بيانات Maher Sync...`
                           : cloudStatus === 'provisioning-gcloud'
-                          ? `جاري ربط Maher App Maker بسيرفرات Google Cloud الأمريكية...`
-                          : 'قم بربط مشروعك بـ Google Cloud أو Firebase عبر سيرفرات النخبة من "ماهر" للحصول على استضافة احترافية.'}
+                          ? `جاري ربط Maher App Maker بسيرفرات النخبة العالمية...`
+                          : 'قم بربط مشروعك بسيرفرات النخبة من "ماهر" للحصول على استضافة احترافية وسرعة خارقة.'}
                       </p>
                     </div>
 
@@ -1712,8 +2531,8 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                             <Database className="w-6 h-6 text-orange-500" />
                           </div>
                           <div className="flex-1">
-                            <h4 className="font-bold text-white text-sm">الاتصال بـ Firebase</h4>
-                            <p className="text-zinc-500 text-sm mt-1.5">بناء قاعدة بيانات Firestore باستخدام إيميلك: {auth.currentUser?.email}</p>
+                            <h4 className="font-bold text-white text-sm">الاتصال بنظام Maher Sync</h4>
+                            <p className="text-zinc-500 text-sm mt-1.5">بناء قاعدة بيانات سحابية مشفرة باستخدام حسابك الأساسي.</p>
                           </div>
                           <ChevronRight className="w-5 h-5 text-zinc-600 group-hover:text-gold-500 transition-colors" />
                         </button>
@@ -1726,8 +2545,8 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                             <Globe className="w-6 h-6 text-blue-500" />
                           </div>
                           <div className="flex-1">
-                            <h4 className="font-bold text-white text-sm">نشر على Google Cloud (سيرفرات أمريكية)</h4>
-                            <p className="text-zinc-500 text-sm mt-1.5">نشر الموقع فوراً عبر Cloud Run في الولايات المتحدة للحصول على أفضل أداء عالمي.</p>
+                            <h4 className="font-bold text-white text-sm">نشر على سيرفرات Maher Global</h4>
+                            <p className="text-zinc-500 text-sm mt-1.5">نشر الموقع فوراً عبر سيرفرات النخبة في أسرع مراكز البيانات العالمية.</p>
                           </div>
                           <ChevronRight className="w-5 h-5 text-zinc-600 group-hover:text-gold-500 transition-colors" />
                         </button>
@@ -1745,12 +2564,12 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                               {connectedService === 'firebase' ? (
                                 <>
                                   <Database className="w-4 h-4 text-orange-500" />
-                                  <span className="text-xs font-bold text-white">بيانات المشروع (Firebase)</span>
+                                  <span className="text-xs font-bold text-white">بيانات المشروع (Maher Sync)</span>
                                 </>
                               ) : (
                                 <>
                                   <Globe className="w-4 h-4 text-blue-500" />
-                                  <span className="text-xs font-bold text-white">بيانات النشر (Google Cloud)</span>
+                                  <span className="text-xs font-bold text-white">بيانات النشر (Maher Global)</span>
                                 </>
                               )}
                             </div>
@@ -1763,14 +2582,14 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                                 <span className="text-[10px] text-zinc-300 font-mono truncate">
                                   {connectedService === 'firebase' 
                                     ? `${projectTitle.toLowerCase().replace(/\s+/g, '-') || 'maher-app'}-${currentChatId?.substring(0, 4)}` 
-                                    : `https://maherappmaker-498083310216.us-central1.run.app`}
+                                    : `https://maher-ai-application-maker-866149039829.us-central1.run.app`}
                                 </span>
                                 <Copy className="w-3 h-3 text-zinc-600 hover:text-white cursor-pointer shrink-0" />
                               </div>
                             </div>
                             <button 
                               onClick={() => {
-                                const projectId = 'maherappmaker-498083310216';
+                                const projectId = 'maher-ai-application-maker-866149039829';
                                 if (connectedService === 'firebase') {
                                   window.open(`https://console.firebase.google.com/project/${projectId}`, '_blank');
                                 } else {
@@ -1783,7 +2602,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                               )}
                             >
                               <ExternalLink className="w-3 h-3" />
-                              <span>{connectedService === 'firebase' ? 'فتح لوحة تحكم Firebase' : 'إدارة النشر على Google Cloud'}</span>
+                              <span>{connectedService === 'firebase' ? 'إدارة بيانات Maher Sync' : 'إدارة سيرفرات Maher Global'}</span>
                             </button>
                           </div>
                         </div>
@@ -1812,8 +2631,8 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
             ) : (
                 <div 
                   className={clsx(
-                    "h-full rounded-xl overflow-hidden shadow-2xl border border-zinc-800 bg-white transition-all duration-300 ease-in-out relative",
-                    deviceSize === 'desktop' ? "w-full" : deviceSize === 'tablet' ? "w-[768px]" : "w-[375px]"
+                    "h-full rounded-xl overflow-hidden shadow-2xl border border-zinc-800 bg-white transition-all duration-300 ease-in-out relative max-w-full",
+                    deviceSize === 'desktop' ? "w-full" : deviceSize === 'tablet' ? "w-full sm:w-[768px]" : "w-full sm:w-[375px]"
                   )}
                 >
                   <div className="h-6 bg-zinc-300 w-full flex items-center px-3 gap-1.5 absolute top-0 z-10 hidden">
@@ -1823,7 +2642,7 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
                     key={previewRefreshKey}
                     title="preview"
                     srcDoc={injectedPreviewCode}
-                    sandbox="allow-scripts allow-popups allow-forms allow-same-origin"
+                    sandbox="allow-scripts allow-popups allow-forms"
                     className="w-full h-full border-none bg-white"
                   />
                 </div>
@@ -1914,18 +2733,42 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
               <div className="w-16 h-16 bg-zinc-950 rounded-2xl flex items-center justify-center mx-auto mb-6 overflow-hidden border border-zinc-800">
                 <img src="/AppIcon~ios-marketing.png" alt="Maher" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">ماذا تريد تسمية مشروعك؟</h3>
-              <p className="text-zinc-400 text-sm mb-6">سيتم استخدام هذا الاسم في الحفظ والربط والنشر السحابي</p>
+              <h3 className="text-xl font-bold text-white mb-2">إعداد المشروع الجديد</h3>
+              <p className="text-zinc-400 text-sm mb-6">يرجى تحديد نوع واسم مشروعك للبدء في البناء</p>
               
-              <input 
-                type="text"
-                value={projectTitle}
-                onChange={(e) => setProjectTitle(e.target.value)}
-                placeholder="مثال: تطبيق توصيل الطلبات"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:border-gold-500 outline-none transition-all mb-4 text-right"
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && projectTitle.trim() && confirmNewProject()}
-              />
+              <div className="mb-4 text-right">
+                <label className="block text-zinc-400 text-xs mb-2 pl-2">اسم المشروع</label>
+                <input 
+                  type="text"
+                  value={projectTitle}
+                  onChange={(e) => setProjectTitle(e.target.value)}
+                  placeholder="مثال: تطبيق توصيل الطلبات"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:border-gold-500 outline-none transition-all text-right"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && projectTitle.trim() && confirmNewProject()}
+                />
+              </div>
+
+              <div className="mb-6 text-right">
+                <label className="block text-zinc-400 text-xs mb-2 pl-2">نوع المشروع</label>
+                <select
+                  value={projectType}
+                  onChange={(e) => setProjectType(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:border-gold-500 outline-none transition-all outline-none appearance-none cursor-pointer"
+                  style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23C5A059'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundPosition: 'left 1rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.2em 1.2em' }}
+                >
+                  <option value="تطبيق آيفون وأندرويد">تطبيق آيفون وأندرويد</option>
+                  <option value="متجر الكتروني">متجر الكتروني</option>
+                  <option value="منصة تعليمية">منصة تعليمية</option>
+                  <option value="لوحة تحكم (Dashboard)">لوحة تحكم (Dashboard)</option>
+                  <option value="تطبيق ويب (Web App)">تطبيق ويب (Web App)</option>
+                  <option value="نظام إدارة محتوى (CMS)">نظام إدارة محتوى (CMS)</option>
+                  <option value="برنامج محاسبة">برنامج محاسبة</option>
+                  <option value="موقع تعريفي">موقع تعريفي</option>
+                  <option value="مدونة شخصية">مدونة شخصية</option>
+                  <option value="أخرى">أخرى</option>
+                </select>
+              </div>
               
               <div className="flex gap-3">
                 <button 
@@ -1955,41 +2798,11 @@ export function MainApp({ user, userProfile }: { user: User; userProfile?: any }
         />
       )}
 
-      {/* Chat Delete Confirmation Modal */}
-      <AnimatePresence>
-        {chatToDelete && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative rtl"
-            >
-              <div className="p-6">
-                <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500">
-                  <Trash2 className="w-6 h-6" />
-                </div>
-                <h3 className="text-xl font-bold text-white mb-2">حذف المحادثة</h3>
-                <p className="text-zinc-400 text-sm mb-6">هل أنت متأكد من رغبتك في حذف هذه المحادثة؟ لا يمكن التراجع عن هذا الإجراء.</p>
-                <div className="flex items-center justify-end gap-3">
-                  <button 
-                    onClick={() => setChatToDelete(null)}
-                    className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-white transition-colors"
-                  >
-                    إلغاء
-                  </button>
-                  <button 
-                    onClick={() => confirmDeleteChat(chatToDelete)}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors border border-red-500/50"
-                  >
-                    نعم، احذف
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <Documentation 
+        isOpen={showDocumentation} 
+        onClose={() => setShowDocumentation(false)} 
+      />
+
     </div>
   );
 }

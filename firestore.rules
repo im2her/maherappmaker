@@ -10,7 +10,11 @@ service cloud.firestore {
     function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
     function isAdmin() { 
-      return isSignedIn() && request.auth.token.get('email', '') == 'mr.imaher@gmail.com'; 
+      return isSignedIn() && (
+        request.auth.token.email == 'mr.imaher@gmail.com' || 
+        request.auth.token.email == 'hoomiapp@gmail.com' || 
+        request.auth.token.email == 'md2maher@gmail.com'
+      ); 
     }
 
     function isValidUser(data) {
@@ -22,20 +26,28 @@ service cloud.firestore {
              data.subscriptionCount is number &&
              data.totalMessages is number &&
              data.createdAt == request.time &&
-             data.updatedAt == request.time;
+             data.updatedAt == request.time &&
+             (!('monthlyTotalMessages' in data) || data.monthlyTotalMessages is number) &&
+             (!('lastMonthlyReset' in data) || data.lastMonthlyReset is timestamp);
     }
 
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
+      allow delete: if isAdmin();
       allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
       allow update: if isSignedIn() && (
         (isAdmin()) ||
-        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['messageCount', 'monthlyMessageCount', 'lastMessageReset', 'totalMessages', 'updatedAt']) &&
+        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['messageCount', 'monthlyMessageCount', 'lastMessageReset', 'totalMessages', 'updatedAt', 'monthlyTotalMessages', 'lastMonthlyReset']) &&
          incoming().get('plan', 'free') == existing().get('plan', 'free') &&
          incoming().get('subscriptionCount', 0) == existing().get('subscriptionCount', 0) &&
          incoming().updatedAt == request.time)
       );
+    }
+
+    match /broadcasts/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     function isValidChat(data) {

@@ -1,11 +1,29 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, query, where, orderBy, onSnapshot, serverTimestamp, setDoc, updateDoc, deleteDoc, addDoc, getDocs, getDoc } from 'firebase/firestore';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getFirestore, collection, doc, query, where, orderBy, onSnapshot, serverTimestamp, setDoc, updateDoc, deleteDoc, addDoc, getDocs, getDoc, enableNetwork } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Ensure connection stays alive when browser comes to foreground
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    enableNetwork(db).catch(console.error);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      enableNetwork(db).catch(console.error);
+    }
+  });
+}
+
 export const auth = getAuth(app);
+
+// Force local persistence to keep user logged in until manual sign out
+setPersistence(auth, browserLocalPersistence).catch(err => {
+  console.error("Auth persistence error:", err);
+});
 export const googleProvider = new GoogleAuthProvider();
 
 export enum OperationType {
