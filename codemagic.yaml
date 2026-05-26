@@ -22,6 +22,16 @@ workflows:
           npx cap init "Maher App" "sa.maher.app" --web-dir dist || true
           npx cap add android || true
           npx cap sync android
+      - name: Fix Kotlin Duplicate Classes
+        script: |
+          cat <<EOF >> android/app/build.gradle
+          configurations {
+              all {
+                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+                  exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+              }
+          }
+          EOF
       - name: Build Android APK
         script: |
           cd android
