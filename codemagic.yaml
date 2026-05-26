@@ -1,6 +1,6 @@
 workflows:
   android-workflow:
-    name: Android Build
+    name: Android Store Build
     environment:
       node: 20
       java: 21
@@ -32,9 +32,17 @@ workflows:
               }
           }
           EOF
-      - name: Build Android APK
+      - name: Auto Generate Keystore and Build Release
         script: |
           cd android
-          ./gradlew assembleDebug
+          # توليد المفتاح تلقائياً داخل السيرفر
+          keytool -genkey -v -keystore maher.keystore -alias maher-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass MaherPassword123 -keypass MaherPassword123 -dname "CN=Maher, O=MaherAI, C=SA"
+          
+          # بناء نسخة المتجر الموقعة بالمفتاح الجديد
+          ./gradlew bundleRelease \
+            -Pandroid.injected.signing.store.file=../maher.keystore \
+            -Pandroid.injected.signing.store.password=MaherPassword123 \
+            -Pandroid.injected.signing.key.alias=maher-alias \
+            -Pandroid.injected.signing.key.password=MaherPassword123
     artifacts:
-      - android/app/build/outputs/**/*.apk
+      - android/app/build/outputs/**/*.aab
