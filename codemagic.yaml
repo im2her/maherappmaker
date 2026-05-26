@@ -35,12 +35,12 @@ workflows:
       - name: Auto Generate Keystore and Build Release
         script: |
           cd android
-          # توليد المفتاح تلقائياً داخل السيرفر
+          # توليد المفتاح
           keytool -genkey -v -keystore maher.keystore -alias maher-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass MaherPassword123 -keypass MaherPassword123 -dname "CN=Maher, O=MaherAI, C=SA"
           
-          # بناء نسخة المتجر الموقعة بالمفتاح الجديد
+          # استخدام المسار الكامل $PWD عشان جرادل ما يضيع الملف
           ./gradlew bundleRelease \
-            -Pandroid.injected.signing.store.file=../maher.keystore \
+            -Pandroid.injected.signing.store.file=$PWD/maher.keystore \
             -Pandroid.injected.signing.store.password=MaherPassword123 \
             -Pandroid.injected.signing.key.alias=maher-alias \
             -Pandroid.injected.signing.key.password=MaherPassword123
