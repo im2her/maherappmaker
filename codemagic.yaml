@@ -3,7 +3,7 @@ workflows:
     name: Android Build
     environment:
       node: 20
-      java: 17
+      java: 21
     triggering:
       events:
         - push
