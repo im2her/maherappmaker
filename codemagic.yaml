@@ -16,9 +16,10 @@ workflows:
         script: npm install
       - name: Build Web App
         script: npm run build
-      - name: Add and Sync Android Platform
+      - name: Force Init and Sync Android
         script: |
-          npm install -g @capacitor/cli
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap init "Maher App" "sa.maher.app" --web-dir dist || true
           npx cap add android || true
           npx cap sync android
       - name: Build Android APK
