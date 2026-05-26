@@ -2,7 +2,7 @@ workflows:
   android-workflow:
     name: Android Build
     environment:
-      node: 20.x
+      node: 20
       java: 17
     triggering:
       events:
