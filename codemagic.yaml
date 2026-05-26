@@ -1,13 +1,21 @@
-{
-  "status": "SECURE_INTEGRATED_CORE_ACTIVE",
-  "saudi_campaign_status": "Saudi promotional algorithms active. Profit floor anchored at 80%.",
-  "frontend_deployment_dashboard_ui": "Dashboard Operational",
-  "backend_tier_and_billing_endpoints": "Active and Validated",
-  "capacitor_config_json": "{\"appId\":\"sa.maher.ai.elite.dynamic\",\"appName\":\"Maher Elite App\",\"webDir\":\"dist\"}",
-  "automation_build_and_deploy_script": "#!/bin/bash\nset -e\nnpm run rebuild:native",
-  "threat_detection_and_mitigation": {
-    "log_parser_and_injection_hunter": "Online",
-    "cloudflare_waf_block_script": "Active"
-  },
-  "admin_telegram_alert_payload": "{\"chat_id\":\"-100_MAHER_ADMIN_GROUP\",\"text\":\"🚨 Codemagic Pipeline Activated via Omega 2090 Core.\",\"parse_mode\":\"Markdown\"}"
-}
+workflows:
+  android-workflow:
+    name: Android Build
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'main'
+          include: true
+          source: true
+    scripts:
+      - name: Install dependencies
+        script: npm install
+      - name: Build Web App
+        script: npm run build
+      - name: Sync Capacitor
+        script: npx cap add android && npx cap sync
+      - name: Build Android APK
+        script: cd android && ./gradlew assembleDebug
+    artifacts:
+      - android/app/build/outputs/apk/**/*.apk
