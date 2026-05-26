@@ -18,6 +18,7 @@ workflows:
         script: npm run build
       - name: Add and Sync Android Platform
         script: |
+          npm install -g @capacitor/cli
           npx cap add android || true
           npx cap sync android
       - name: Build Android APK
