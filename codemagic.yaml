@@ -1,6 +1,9 @@
 workflows:
   android-workflow:
     name: Android Build
+    environment:
+      node: 20.x
+      java: 17
     triggering:
       events:
         - push
@@ -13,9 +16,13 @@ workflows:
         script: npm install
       - name: Build Web App
         script: npm run build
-      - name: Sync Capacitor
-        script: npx cap add android && npx cap sync
+      - name: Add and Sync Android Platform
+        script: |
+          npx cap add android || true
+          npx cap sync android
       - name: Build Android APK
-        script: cd android && ./gradlew assembleDebug
+        script: |
+          cd android
+          ./gradlew assembleDebug
     artifacts:
-      - android/app/build/outputs/apk/**/*.apk
+      - android/app/build/outputs/**/*.apk
